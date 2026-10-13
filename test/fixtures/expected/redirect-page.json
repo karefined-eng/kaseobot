@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "overallScore": 100,
+  "summary": { "passed": 12, "warnings": 0, "failed": 0, "skipped": 0 },
+  "findingStatuses": {
+    "title-present": "pass",
+    "meta-description-present": "pass",
+    "canonical-link-present": "pass",
+    "robots-meta-directives": "pass",
+    "viewport-meta-present": "pass",
+    "h1-presence-and-count": "pass",
+    "image-alt-attributes": "pass",
+    "internal-links": "pass",
+    "external-links": "pass",
+    "html-lang-attribute": "pass",
+    "https-enforcement": "pass",
+    "heading-hierarchy": "pass"
+  }
+}

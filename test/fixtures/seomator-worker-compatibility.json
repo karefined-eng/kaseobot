@@ -1,0 +1,32 @@
+{
+  "package": "@seomator/seo-audit",
+  "version": "5.1.0",
+  "sources": [
+    "https://www.npmjs.com/package/@seomator/seo-audit",
+    "https://raw.githubusercontent.com/seo-skills/seo-audit-skill/main/README.md"
+  ],
+  "documentedApi": "createAuditor({ measureCwv: false }).audit(url)",
+  "nodeProbeExports": [
+    "createAuditor",
+    "Auditor",
+    "AuditsDatabase",
+    "categories",
+    "getAllRules"
+  ],
+  "nodeProbeMethods": {
+    "module.audit": false,
+    "module.runAudit": false,
+    "module.execute": false,
+    "createAuditor().audit": true
+  },
+  "workerCompatibility": "failed",
+  "probe": {
+    "runtime": "Wrangler 4.150.0 Worker bundle with nodejs_compat",
+    "importAttempted": true,
+    "pageFetchInWorker": "blocked by bundle failure",
+    "minimalAuditInWorker": "blocked by bundle failure",
+    "normalizedJsonInWorker": "blocked by bundle failure"
+  },
+  "failure": "Playwright dependency bundle could not resolve chromium-bidi/lib/cjs/bidiMapper/BidiMapper and chromium-bidi/lib/cjs/cdp/CdpConnection.",
+  "decision": "Do not include or force this package in the Cloudflare Worker; use StaticHtmlAuditEngine without browser dependencies."
+}

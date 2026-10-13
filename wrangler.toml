@@ -1,0 +1,41 @@
+name = "kaseobot"
+main = "src/index.ts"
+compatibility_date = "2026-10-13"
+
+[vars]
+ALLOWED_TELEGRAM_USER_IDS = ""
+MAX_AUDITS_PER_USER_PER_HOUR = "10"
+MAX_CONCURRENT_AUDITS_PER_USER = "2"
+AUDIT_TIMEOUT_MS = "20000"
+GEO_MAX_PAGES = "5"
+NVIDIA_KIMI_MODEL = "moonshotai/kimi-k3"
+NVIDIA_KIMI_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
+KIMI_TIMEOUT_MS = "60000"
+MAX_FINDINGS_FOR_KIMI = "25"
+MAX_EVIDENCE_LENGTH = "300"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kaseobot-data"
+database_id = "local-development-only"
+migrations_dir = "migrations"
+
+[[queues.producers]]
+binding = "AUDIT_QUEUE"
+queue = "kaseobot-audit-jobs"
+
+[[queues.consumers]]
+queue = "kaseobot-audit-jobs"
+max_batch_size = 1
+max_batch_timeout = 0
+max_retries = 3
+dead_letter_queue = "kaseobot-audit-dead-letter"
+
+[[queues.consumers]]
+queue = "kaseobot-audit-dead-letter"
+max_batch_size = 1
+max_batch_timeout = 0
+max_retries = 3
+
+[triggers]
+crons = ["0 3 * * *"]

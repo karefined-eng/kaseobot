@@ -1,0 +1,10 @@
+TELEGRAM_BOT_TOKEN=replace-with-a-local-test-token
+TELEGRAM_WEBHOOK_SECRET=replace-with-a-long-random-secret
+NVIDIA_API_KEY=replace-with-a-nvidia-api-key
+ALLOWED_TELEGRAM_USER_IDS=123456789
+NVIDIA_KIMI_MODEL=moonshotai/kimi-k3
+NVIDIA_KIMI_ENDPOINT=https://integrate.api.nvidia.com/v1/chat/completions
+KIMI_TIMEOUT_MS=60000
+MAX_FINDINGS_FOR_KIMI=25
+MAX_EVIDENCE_LENGTH=300
+GEO_MAX_PAGES=5
