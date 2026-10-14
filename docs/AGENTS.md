@@ -25,7 +25,7 @@
 
 ## Useful checks
 
-Run from `/workspace/kaseobot`:
+Run from the repository root (the directory containing `wrangler.toml`; `C:\Users\asamoah\kaseobot` on the machine this was set up on). These are POSIX-style snippets; on PowerShell 5.1 use the equivalents below.
 
 ```sh
 rg -n "history|forget|retry|callback_query|sendDocument|seomator" src test README.md docs/README.md
@@ -33,10 +33,10 @@ rg -n "CREATE TABLE|CREATE INDEX|expires_at|FOREIGN KEY" migrations
 npm run check
 npm audit
 npx wrangler deploy --dry-run
-CI=1 npx wrangler d1 migrations apply kaseobot-data --local
+npx wrangler d1 migrations apply kaseobot-data --local
 ```
 
-For noisy BUILD_SPEC searches, search one feature at a time and use bounded file-reader ranges. Validate D1 SQL with Wrangler's local D1 as well as test fakes. For packaging, exclude `node_modules`, `.wrangler`, `.dev.vars`, `.git`, and editor lock files. This Kaseobot workspace is not currently a Git repository; use filesystem inspection and build/test validation instead of `git status`.
+For noisy BUILD_SPEC searches, search one feature at a time and use bounded file-reader ranges. Validate D1 SQL with Wrangler's local D1 as well as test fakes. For packaging, exclude `node_modules`, `.wrangler`, `.dev.vars`, `.git`, and editor lock files. This workspace is a Git repository with `origin` = `karefined-eng/kaseobot`; use `git status`, `git log`, and `git fetch` normally, and do not `git init` it again.
 
 ## Tool quirks and environment traps
 
@@ -44,10 +44,14 @@ For noisy BUILD_SPEC searches, search one feature at a time and use bounded file
 |---|---|
 | Opening the full Telegram Bot API in the in-app browser returned `SNAPSHOT_TOO_LARGE`; the page had 50,001 nodes, over the 50,000-node safety budget. | Use targeted text fetches with a specific method/field query or a smaller anchored section; do not repeat the full-page snapshot. |
 | A broad `rg ... | tail -360` over the attached BUILD_SPEC returned captured/truncated output rather than complete inline text. | Narrow the search and read bounded ranges; if a capture file is returned, read that file rather than rerunning the broad command. |
-| `.~lock.wrangler.toml#` is an unrelated editor lock file in the project root. | Do not delete it automatically; exclude `kaseobot/.~lock.*` from archives. |
+| `.~lock.wrangler.toml#` was an unrelated editor lock file in the project root. It is not present in the current checkout. | If it reappears, do not delete it automatically; exclude `kaseobot/.~lock.*` from archives. |
 | V4A patch context can be ambiguous: one hunk reported `Found 2 places matching these lines` for repeated `await saveAuditResult(db, audit);`; another reported `Found 5 places matching these lines` for a bare `}`. A long `/help` line also produced `failed to find the lines to replace`. | Re-read a narrow range immediately before patching, use short unique context with surrounding control flow, and inspect the affected file immediately after a successful insertion. Do not use a bare brace or treat a `@@` context header as new content. |
 | A helper insertion anchored only by `@@ function jobAcknowledgment(...)` was misplaced at the end of `src/index.ts`, leaving an incomplete duplicate and a truncated file. | Restore from the previously read source; for insertions include actual unchanged neighboring lines and verify the insertion location before continuing. Prefer a standalone module for reusable helpers. |
-| `git status --short --branch` returned `fatal: not a git repository (or any of the parent directories): .git`. | No state changed. Use `find`, `rg`, tests, Wrangler validation, and archive/checksum inspection. |
+| `git status --short --branch` returned `fatal: not a git repository (or any of the parent directories): .git`. | Historical, from a non-Git workspace. The repository now exists, so this no longer reproduces. |
+| On PowerShell 5.1, `git fetch`/`git pull` print progress to **stderr**. PowerShell wraps stderr from native commands in `NativeCommandError` / `RemoteException` and the run renders as a red failure ("git : From https://github.com/... At line:1 char:..."). | The exit code is still `0`, so the operation succeeded. Do not retry or "fix" it. Judge success from `git status -sb`, `git rev-list --left-right --count HEAD...origin/main`, and `git log -1` instead of from the stderr rendering. |
+| npm 11.19.0 blocked the `esbuild` and `workerd` postinstall scripts (npm `install-scripts` warning) during `npm ci`. | Both still work: `esbuild.exe` and `workerd.exe` ship as prebuilt binaries, so the skipped script is harmless. Verify by running "npx --no-install wrangler deploy --dry-run" and "npm run check", not by trusting a "--version" probe. Do not re-run `npm ci` or approve scripts to "fix" it. |
+| Shell snippets written for POSIX do not run as-is on PowerShell 5.1: a leading env assignment such as `CI=1 npx wrangler d1 migrations apply kaseobot-data --local` fails, as does `&&` chaining. | Set the variable first and chain with `;`: `$env:CI=1; npx wrangler d1 migrations apply kaseobot-data --local`. |
+| The editor file tools match content as LF, but this workspace checks out CRLF (`core.autocrlf=true`, no `.gitattributes`). A match has failed with `workspace_edit_match_not_found` (disk CRLF, supplied text LF), and a successful editor edit injects LF lines into a CRLF file, leaving mixed endings that make git warn "LF will be replaced by CRLF". | For CRLF files, patch through PowerShell with `[IO.File]::ReadAllText` and `WriteAllText`, or re-normalize the whole file to CRLF after any editor-tool edit; confirm with a byte-level CRLF-vs-LF count. |
 
 The documentation foundation was absent at Milestone 6 start; `docs/origin.md` and this manual were established from the user's standards, authoritative handoff, and current implementation. The M6 walkthrough belongs in `docs/handoff/`, and user-workflow rationale belongs in `docs/research/`.
 
