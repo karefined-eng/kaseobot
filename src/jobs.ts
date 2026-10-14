@@ -249,6 +249,10 @@ export async function createAuditJob(
     result_summary_message_id: null,
     source_update_id: sourceUpdateId,
   };
+  // Ensure the user row exists (history_enabled defaults to 1 in schema)
+  await db.prepare(`INSERT OR IGNORE INTO users (telegram_user_id, created_at) VALUES (?, ?)`)
+    .bind(userId, createdAt)
+    .run();
   const delivery = await enqueueIfQueued(db, env.AUDIT_QUEUE, job);
   return { ...delivery, duplicate: false };
 }

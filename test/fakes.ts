@@ -129,6 +129,19 @@ export class FakeD1 implements D1DatabaseLike {
     }
     const normalized = normalize(query);
 
+    if (normalized.startsWith("insert or ignore into users")) {
+      const [userId, createdAt] = values;
+      const existing = this.users.has(String(userId));
+      if (!existing) {
+        this.users.set(String(userId), {
+          telegram_user_id: String(userId),
+          created_at: String(createdAt),
+          history_enabled: 1,
+        });
+      }
+      return result(0);
+    }
+
     if (normalized.startsWith("insert or ignore into jobs")) {
       const [jobId, auditId, userId, chatId, type, url, createdAt, sourceUpdateId,
         hourlyUserId, hourAgo, hourlyLimit, activeUserId, activeLimit] = values;
