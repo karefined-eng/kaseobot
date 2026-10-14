@@ -1,10 +1,12 @@
 /**
  * SEOmator Container Server
  * Matches seomator.com free SEO/GEO audit options — granular categories, configurable
+ * Includes full-page and viewport screenshots embedded in Markdown
  */
 
 import { createServer } from 'node:http';
 import { audit } from '@seomator/seo-audit';
+import { chromium } from 'playwright';
 
 const PORT = process.env.PORT || 3000;
 
@@ -56,7 +58,92 @@ function parseCategories(input) {
   return ['technical', 'content', 'performance', 'links', 'images', 'security', 'mobile'];
 }
 
-function buildMarkdownReport(result, url, options) {
+// Capture screenshots using Playwright
+async function captureScreenshots(url, options) {
+  const screenshots = {};
+  const {
+    screenshot = true,
+    screenshotFullPage = true,
+    screenshotViewport = 'desktop',
+    mobile = false,
+    waitForSelector,
+    javascript = true,
+    timeout = 30000,
+  } = options;
+
+  if (!screenshot) return screenshots;
+
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
+
+    const context = await browser.newContext({
+      viewport: mobile ? { width: 390, height: 844 } : { width: 1920, height: 1080 },
+      userAgent: options.userAgent,
+      javaScriptEnabled: javascript,
+    });
+
+    if (options.cookies) {
+      await context.addCookies(options.cookies);
+    }
+
+    const page = await context.newPage();
+    
+    if (options.headers) {
+      await page.setExtraHTTPHeaders(options.headers);
+    }
+
+    await page.goto(url, { 
+      waitUntil: 'networkidle', 
+      timeout 
+    });
+
+    if (waitForSelector) {
+      await page.waitForSelector(waitForSelector, { timeout: 10000 });
+    }
+
+    // Wait for fonts and images to load
+    await page.waitForLoadState('networkidle');
+    await page.evaluate(() => document.fonts.ready);
+
+    // Full-page screenshot
+    if (screenshotFullPage) {
+      const fullPageBuffer = await page.screenshot({ 
+        fullPage: true, 
+        type: 'png' 
+      });
+      screenshots.fullPage = `data:image/png;base64,${fullPageBuffer.toString('base64')}`;
+    }
+
+    // Viewport screenshot (current viewport)
+    const viewportBuffer = await page.screenshot({ 
+      fullPage: false, 
+      type: 'png' 
+    });
+    screenshots.viewport = `data:image/png;base64,${viewportBuffer.toString('base64')}`;
+
+    // Mobile viewport screenshot if not already mobile
+    if (!mobile) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.waitForTimeout(500); // Allow reflow
+      const mobileBuffer = await page.screenshot({ fullPage: false, type: 'png' });
+      screenshots.mobile = `data:image/png;base64,${mobileBuffer.toString('base64')}`;
+    }
+
+  } catch (err) {
+    console.error(`[${new Date().toISOString()}] Screenshot error for ${url}:`, err.message);
+    screenshots.error = err.message;
+  } finally {
+    if (browser) await browser.close();
+  }
+
+  return screenshots;
+}
+
+function buildMarkdownReport(result, url, options, screenshots = {}) {
   const lines = [
     `# ${options.auditType === 'geo' ? 'GEO / AI Readiness' : 'SEO'} Audit Report`,
     `**Target:** ${url}`,
@@ -69,6 +156,38 @@ function buildMarkdownReport(result, url, options) {
     '---',
     ''
   ];
+
+  // Screenshots section
+  if (screenshots && Object.keys(screenshots).length > 0 && !screenshots.error) {
+    lines.push('## 📸 Screenshots');
+    lines.push('');
+
+    if (screenshots.fullPage) {
+      lines.push('### Full Page');
+      lines.push(`![Full Page Screenshot](${screenshots.fullPage})`);
+      lines.push('');
+    }
+
+    if (screenshots.viewport) {
+      lines.push('### Desktop Viewport (1920×1080)');
+      lines.push(`![Desktop Viewport](${screenshots.viewport})`);
+      lines.push('');
+    }
+
+    if (screenshots.mobile) {
+      lines.push('### Mobile Viewport (390×844)');
+      lines.push(`![Mobile Viewport](${screenshots.mobile})`);
+      lines.push('');
+    }
+
+    lines.push('---');
+    lines.push('');
+  } else if (screenshots.error) {
+    lines.push(`⚠️ **Screenshot capture failed:** ${screenshots.error}`);
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
 
   // Summary table
   if (result.categories) {
@@ -165,6 +284,25 @@ function buildMarkdownReport(result, url, options) {
   return lines.join('\n');
 }
 
+function parseCategories(input) {
+  if (!input || input === 'all' || input === 'seo-full') {
+    return Object.keys(AUDIT_CATEGORIES).filter(k => !['seo-full', 'geo', 'quick'].includes(k));
+  }
+  if (input === 'geo') {
+    return ['ai-geo', 'structured-data', 'content', 'eeat', 'crawlability'];
+  }
+  if (input === 'quick') {
+    return ['technical', 'content', 'security', 'crawlability'];
+  }
+  if (Array.isArray(input)) {
+    return input.filter(c => AUDIT_CATEGORIES[c]).map(c => c.toLowerCase());
+  }
+  if (typeof input === 'string') {
+    return input.split(',').map(c => c.trim().toLowerCase()).filter(c => AUDIT_CATEGORIES[c]);
+  }
+  return ['technical', 'content', 'performance', 'links', 'images', 'security', 'mobile'];
+}
+
 function buildOptions(reqBody) {
   const {
     url,
@@ -182,6 +320,9 @@ function buildOptions(reqBody) {
     headers,                          // custom headers
     javascript = true,                // enable JS rendering
     waitForSelector,                  // wait for specific element
+    screenshot = true,                // capture screenshots
+    screenshotFullPage = true,        // full-page screenshot
+    screenshotViewport = 'desktop',   // 'desktop' | 'mobile' | 'both'
   } = reqBody;
 
   const selectedCategories = parseCategories(auditType === 'custom' ? categories : auditType);
@@ -195,12 +336,15 @@ function buildOptions(reqBody) {
     timeout: Math.min(Math.max(30000, timeout), 300000),
     mobile,
     simulateInteraction,
-    noCwv,
+    noCwv: true,  // CWV requires separate measurement; skip for speed
     javascript,
     userAgent,
     cookies,
     headers,
     waitForSelector,
+    screenshot: true,
+    screenshotFullPage: true,
+    screenshotViewport: 'both',
   };
 }
 
@@ -266,6 +410,17 @@ const server = createServer(async (req, res) => {
     try {
       console.log(`[${new Date().toISOString()}] ${options.auditType.toUpperCase()} audit: ${input.url} [${options.categories.join(', ')}]`);
 
+      // Capture screenshots first (parallel with audit would be faster, but sequential for simplicity)
+      const screenshots = await captureScreenshots(input.url, {
+        ...options,
+        waitForSelector: options.waitForSelector,
+        javascript: options.javascript,
+        mobile: options.mobile,
+        userAgent: options.userAgent,
+        cookies: options.cookies,
+        headers: options.headers,
+      });
+
       const result = await audit(input.url, {
         format: 'json',
         categories: options.categories,
@@ -283,7 +438,7 @@ const server = createServer(async (req, res) => {
         waitForSelector: options.waitForSelector,
       });
 
-      const markdown = buildMarkdownReport(result, input.url, options);
+      const markdown = buildMarkdownReport(result, input.url, options, screenshots);
 
       res.writeHead(200, {
         'Content-Type': 'text/markdown; charset=utf-8',
