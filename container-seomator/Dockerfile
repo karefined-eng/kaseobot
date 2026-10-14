@@ -42,13 +42,12 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright Chromium
-RUN npx playwright install --with-deps chromium
-
 WORKDIR /app
 
-# Install SEOmator
-RUN npm install --omit=dev @seomator/seo-audit@latest
+# Install SEOmator + playwright SDK (version-matched), then Chromium browsers
+RUN npm init -y \
+    && npm install --omit=dev @seomator/seo-audit@latest playwright \
+    && npx playwright install --with-deps chromium
 
 # Copy server
 COPY server.js .

@@ -13,7 +13,6 @@ NVIDIA_KIMI_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
 KIMI_TIMEOUT_MS = "60000"
 MAX_FINDINGS_FOR_KIMI = "25"
 MAX_EVIDENCE_LENGTH = "300"
-SEOMATOR_CONTAINER_URL = "http://seomator-container:3000"
 
 [[d1_databases]]
 binding = "DB"
@@ -38,9 +37,21 @@ max_batch_size = 1
 max_batch_timeout = 0
 max_retries = 3
 
+# SEOmator audit container (Cloudflare Containers beta).
+# Linked to the SeomatorContainer Durable Object; requests stub-fetch'ed to
+# the SEOMATOR_CONTAINER binding are proxied to container port 3000.
 [[containers]]
 name = "seomator-container"
-dir = "./container-seomator"
+class_name = "SeomatorContainer"
+image = "./container-seomator/Dockerfile"
+max_instances = 1
+
+[durable_objects]
+bindings = [{ name = "SEOMATOR_CONTAINER", class_name = "SeomatorContainer" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SeomatorContainer"]
 
 [triggers]
 crons = ["0 3 * * *"]

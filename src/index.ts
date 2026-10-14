@@ -20,6 +20,7 @@ import {
   type TelegramInlineKeyboard,
 } from "./telegram-ui";
 import { validateAndNormalizeUrl } from "./url-validation";
+import type { SeomatorContainerNamespace } from "./seomator-container";
 
 export interface Env extends JobEnvironment {
   TELEGRAM_BOT_TOKEN?: string;
@@ -37,7 +38,7 @@ export interface Env extends JobEnvironment {
   MAX_FINDINGS_FOR_KIMI?: string;
   MAX_EVIDENCE_LENGTH?: string;
   GEO_MAX_PAGES?: string;
-  SEOMATOR_CONTAINER_URL?: string;
+  SEOMATOR_CONTAINER?: SeomatorContainerNamespace;
 }
 
 export interface ExecutionContextLike {
@@ -240,7 +241,7 @@ async function handleAuthorizedMessage(
       const validated = validateAndNormalizeUrl(command.args);
       if (!validated.ok) {
         reply = validated.error;
-      } else if (!env.SEOMATOR_CONTAINER_URL) {
+      } else if (!env.SEOMATOR_CONTAINER) {
         reply = "Deep audit engine (SEOmator Container) is not configured. Use /audit for static checks or /seomator for external tools.";
       } else {
         // Parse: /deepaudit <url> [--type=seo-full|geo|quick|custom] [--categories=...] [--crawl] [--max-pages=N] [--mobile]
@@ -261,7 +262,8 @@ async function handleAuthorizedMessage(
         const timeoutMs = 300000;
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
         try {
-          const response = await fetch(env.SEOMATOR_CONTAINER_URL + "/audit", {
+          const stub = env.SEOMATOR_CONTAINER.get(env.SEOMATOR_CONTAINER.idFromName("seomator"));
+          const response = await stub.fetch("http://container/audit", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(options),
@@ -459,3 +461,4 @@ const worker = {
 };
 
 export default worker;
+export { SeomatorContainer } from "./seomator-container";
