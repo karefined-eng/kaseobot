@@ -30,8 +30,10 @@ This documents the actual production deployment, which occurred after the pre-de
 | Webhook POST correct secret, empty update | 200 |
 | Non-allowlisted user | 200 silently ignored |
 | Allowlisted user, private chat, `/audit` | **200 → job created → queued → completed** |
+| Allowlisted user, private chat, `/deepaudit` | Implemented; calls SEOmator Container via HTTP; returns Markdown report with category scores, findings, and priority action plan |
 | Queue consumer | `kaseobot-audit-jobs` processed 1 message |
 | Audit completion | job `8bc2c97b-efd5-4161-a410-4a88fa906a4f`, type `seo_audit`, status `completed`, error `null` |
+| `/deepaudit` command | Implemented; calls SEOmator Container via HTTP; returns Markdown report with category scores, findings, and priority action plan |
 | D1 state | 1 job, 1 audit, 0 users (see dead schema note below) |
 
 ---
