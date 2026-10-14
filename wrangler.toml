@@ -38,5 +38,9 @@ max_batch_size = 1
 max_batch_timeout = 0
 max_retries = 3
 
+[[containers]]
+name = "seomator-container"
+dir = "./container-seomator"
+
 [triggers]
 crons = ["0 3 * * *"]
