@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2026-10-13"
 
 [vars]
-ALLOWED_TELEGRAM_USER_IDS = ""
+ALLOWED_TELEGRAM_USER_IDS = "7628415256"
 MAX_AUDITS_PER_USER_PER_HOUR = "10"
 MAX_CONCURRENT_AUDITS_PER_USER = "2"
 AUDIT_TIMEOUT_MS = "20000"
@@ -17,7 +17,7 @@ MAX_EVIDENCE_LENGTH = "300"
 [[d1_databases]]
 binding = "DB"
 database_name = "kaseobot-data"
-database_id = "local-development-only"
+database_id = "c1140596-3ca6-42d7-ab56-fadbc46c84d2"
 migrations_dir = "migrations"
 
 [[queues.producers]]
