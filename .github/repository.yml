@@ -1,0 +1,13 @@
+# Kaseobot — SEO/GEO Audit Bot for Telegram
+
+## Description
+A private Telegram bot for SEO and GEO audits running on Cloudflare Workers with D1, Queues, and optional SEOmator Container integration.
+
+## Topics
+`telegram-bot` `seo-audit` `geo-audit` `cloudflare-workers` `d1-database` `cloudflare-queues` `cloudflare-containers` `seo` `geo` `seomator` `playwright` `typescript` `serverless` `edge-computing`
+
+## Repository Settings
+- **Visibility**: Public
+- **Features**: Issues, Wiki, Discussions, Projects
+- **Branch protection**: main (require PR reviews, status checks)
+- **Security**: Dependabot alerts, Code scanning, Secret scanning

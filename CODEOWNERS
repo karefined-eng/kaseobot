@@ -1,0 +1,11 @@
+# CODEOWNERS
+# These users will be automatically requested for review on PRs
+
+* @karefined-eng
+
+/.github/workflows/ @karefined-eng
+/wrangler.toml @karefined-eng
+/src/ @karefined-eng
+/container-seomator/ @karefined-eng
+/docs/ @karefined-eng
+/test/ @karefined-eng
