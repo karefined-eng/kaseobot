@@ -37,6 +37,7 @@ export interface Env extends JobEnvironment {
   MAX_FINDINGS_FOR_KIMI?: string;
   MAX_EVIDENCE_LENGTH?: string;
   GEO_MAX_PAGES?: string;
+  SEOMATOR_CONTAINER_URL?: string;
 }
 
 export interface ExecutionContextLike {
@@ -81,11 +82,12 @@ export function routeCommand(command: ParsedCommand): string {
         "/help — show this help",
         "/audit <url> — enqueue a one-page SEO audit",
         "/geo <url> — enqueue a GEO crawl of up to five same-origin pages",
+        "/deepaudit <url> [--type=seo-full|geo|quick|custom] [--categories=...] [--crawl] [--max-pages=N] [--mobile] — run full SEOmator engine via Container",
         "/status <job_id> — check an audit job",
         "/cancel <job_id> — cancel a queued job",
         "/history — list your recent audits",
         "/forget — delete your saved audit history",
-        "/seomator <url> — open SEOmator’s external SEO/GEO tools",
+        "/seomator <url> — open SEOmator's external SEO/GEO tools",
         "/privacy — show data-handling information",
         "",
         "Audits inspect static HTML only. GEO crawls are capped at five same-origin pages. Kimi may explain measured findings when NVIDIA access is configured; otherwise Kaseobot sends a deterministic report.",
@@ -101,7 +103,7 @@ export function routeCommand(command: ParsedCommand): string {
         "SEOmator buttons open its external public tools. Kaseobot does not submit your URL or retrieve the external result automatically.",
       ].join("\n\n");
     default:
-      return `I don't recognize /${command.name}. Use /help to see available commands.`;
+      return "I don't recognize /" + command.name + ". Use /help to see available commands.";
   }
 }
 
@@ -120,8 +122,8 @@ async function secretsMatch(expected: string | undefined, actual: string | null)
 
   const encoder = new TextEncoder();
   const [expectedDigest, actualDigest] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
-    crypto.subtle.digest("SHA-256", encoder.encode(actual)),
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(expected)),
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(actual)),
   ]);
 
   const expectedBytes = new Uint8Array(expectedDigest);
@@ -149,13 +151,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function sendTelegramMessage(
-  token: string,
+  botTokenParam: string,
   chatId: number,
   text: string,
   replyMarkup?: TelegramInlineKeyboard,
 ): Promise<void> {
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    await fetch("https://api.telegram.org/bot" + botTokenParam + "/sendMessage", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -178,10 +180,10 @@ function jobAcknowledgment(
 ): string {
   const label = type === "geo_audit" ? "GEO audit" : "SEO audit";
   if (status === "failed") {
-    return `The ${label.toLowerCase()} job could not be queued or processed.\nWebsite: ${url}\nJob ID: ${jobId}\nUse /status ${jobId} for details.`;
+    return "The " + label.toLowerCase() + " job could not be queued or processed.\nWebsite: " + url + "\nJob ID: " + jobId + "\nUse /status " + jobId + " for details.";
   }
-  const crawlNote = type === "geo_audit" ? `\nCrawling up to ${maxPages} same-origin pages.` : "";
-  return `${label} job accepted.\nWebsite: ${url}\nJob ID: ${jobId}\nStatus: ${status}${crawlNote}\nUse /status ${jobId} to check progress.`;
+  const crawlNote = type === "geo_audit" ? "\nCrawling up to " + maxPages + " same-origin pages." : "";
+  return label + " job accepted.\nWebsite: " + url + "\nJob ID: " + jobId + "\nStatus: " + status + crawlNote + "\nUse /status " + jobId + " to check progress.";
 }
 
 async function handleAuthorizedMessage(
@@ -234,6 +236,50 @@ async function handleAuthorizedMessage(
         );
         if (result.job.status === "failed") replyMarkup = retryKeyboard(result.job.job_id);
       }
+    } else if (command.name === "deepaudit") {
+      const validated = validateAndNormalizeUrl(command.args);
+      if (!validated.ok) {
+        reply = validated.error;
+      } else if (!env.SEOMATOR_CONTAINER_URL) {
+        reply = "Deep audit engine (SEOmator Container) is not configured. Use /audit for static checks or /seomator for external tools.";
+      } else {
+        // Parse: /deepaudit <url> [--type=seo-full|geo|quick|custom] [--categories=...] [--crawl] [--max-pages=N] [--mobile]
+        const args = command.args.split(/\s+/);
+        const url = validated.url;
+        const options: Record<string, unknown> = { url };
+        for (const arg of args.slice(1)) {
+          if (arg.startsWith("--type=")) options.auditType = arg.slice(7);
+          else if (arg.startsWith("--categories=")) options.categories = arg.slice(13);
+          else if (arg === "--crawl") options.crawl = true;
+          else if (arg.startsWith("--max-pages=")) options.maxPages = parseInt(arg.slice(12), 10);
+          else if (arg === "--mobile") options.mobile = true;
+          else if (arg.startsWith("--concurrency=")) options.concurrency = parseInt(arg.slice(14), 10);
+          else if (arg.startsWith("--timeout=")) options.timeout = parseInt(arg.slice(10), 10);
+          else if (arg.startsWith("--user-agent=")) options.userAgent = arg.slice(13);
+        }
+        const controller = new AbortController();
+        const timeoutMs = 300000;
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetch(env.SEOMATOR_CONTAINER_URL + "/audit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(options),
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+          if (!response.ok) {
+            const err = await response.text();
+            reply = "Deep audit failed (" + response.status + "): " + err.slice(0, 200);
+          } else {
+            const markdown = await response.text();
+            reply = markdown;
+          }
+        } catch (err: unknown) {
+          clearTimeout(timeoutId);
+          reply = "Deep audit error: " + (err instanceof Error ? err.message : String(err));
+        }
+      }
     } else if (command.name === "status") {
       reply = await getJobStatusMessage(env.DB, command.args || undefined, userId);
     } else if (command.name === "cancel") {
@@ -250,7 +296,7 @@ async function handleAuthorizedMessage(
       if (!validated.ok) {
         reply = validated.error;
       } else {
-        reply = `Open SEOmator’s hosted tools for this website:\n${validated.url}\n\nChoose a tool below. SEOmator runs it on its website; Kaseobot does not submit the URL or store that external audit.`;
+        reply = "Open SEOmator's hosted tools for this website:\n" + validated.url + "\n\nChoose a tool below. SEOmator runs it on its website; Kaseobot does not submit the URL or store that external audit.";
         replyMarkup = seomatorKeyboard();
       }
     } else {
