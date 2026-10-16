@@ -16,6 +16,7 @@ import {
   addWatchedUrl,
   listWatchedUrls,
   removeWatchedUrl,
+  removeWatchedUrlById,
   runWatcher,
   type WatchedUrl,
 } from "./watch";
@@ -38,6 +39,8 @@ import {
   seomatorKeyboard,
   updateIdFrom,
   welcomeMessage,
+  watchesKeyboard,
+  watchAckKeyboard,
   type TelegramInlineKeyboard,
   type TelegramReplyKeyboard,
 } from "./telegram-ui";
@@ -474,22 +477,42 @@ async function handleAuthorizedMessage(
       reply = await cancelAuditJob(db, command.args || undefined, userId);
       replyMarkup = mainMenuKeyboard();
     } else if (command.name === "watch") {
-      const validated = validateAndNormalizeUrl(command.args);
-      if (!validated.ok) {
-        reply = validated.error;
+      if (!command.args || command.args.trim().length === 0) {
+        const watches = await listWatchedUrls(db, String(userId));
+        if (watches.length === 0) {
+          reply = `You're not watching any sites yet.\n\nSend /watch <url> to start monitoring a site for changes.\n\nExample: /watch https://example.com`;
+        } else {
+          reply = `Watching ${watches.length} site${watches.length === 1 ? '' : 's'}. Tap Remove next to one to stop watching it:`;
+        }
+        replyMarkup = watchesKeyboard(watches);
       } else {
-        const { created, watchId } = await addWatchedUrl(db, String(userId), validated.url);
-        reply = created
-          ? `Watching ${validated.url}. Watch ID: ${watchId}\n\nI'll check it on a schedule and alert you if anything changes.`
-          : `You are already watching ${validated.url}. Watch ID: ${watchId}\n\nUse /unwatch <url> to stop watching it.`;
+        const validated = validateAndNormalizeUrl(command.args);
+        if (!validated.ok) {
+          reply = validated.error;
+        } else {
+          const { created, watchId } = await addWatchedUrl(db, String(userId), validated.url);
+          reply = created
+            ? `Watching ${validated.url}. Watch ID: ${watchId}\n\nI'll check it on a schedule and alert you if anything changes.`
+            : `You are already watching ${validated.url}. Watch ID: ${watchId}\n\nUse /unwatch <url> to stop watching it.`;
+          replyMarkup = watchAckKeyboard(watchId);
+        }
       }
-      replyMarkup = mainMenuKeyboard();
     } else if (command.name === "unwatch") {
-      const { removed } = await removeWatchedUrl(db, String(userId), command.args.trim());
-      reply = removed
-        ? `Stopped watching ${command.args.trim()}.`
-        : `I wasn't watching ${command.args.trim()}. Use /watch <url> to start.`;
-      replyMarkup = mainMenuKeyboard();
+      if (!command.args || command.args.trim().length === 0) {
+        const watches = await listWatchedUrls(db, String(userId));
+        if (watches.length === 0) {
+          reply = `You're not watching any sites.\n\nSend /watch <url> to start monitoring a site.`;
+        } else {
+          reply = `Watching ${watches.length} site${watches.length === 1 ? '' : 's'}. Tap Remove next to one to stop watching it:`;
+        }
+        replyMarkup = watchesKeyboard(watches);
+      } else {
+        const { removed } = await removeWatchedUrl(db, String(userId), command.args.trim());
+        reply = removed
+          ? `Stopped watching ${command.args.trim()}.`
+          : `I wasn't watching ${command.args.trim()}. Use /watch <url> to start watching it.`;
+        replyMarkup = mainMenuKeyboard();
+      }
     } else if (command.name === "history") {
       reply = formatHistory(await getUserHistory(db, String(userId)));
       replyMarkup = mainMenuKeyboard();
@@ -742,6 +765,33 @@ async function handleJobsMenuCallback(env: Env, callbackQueryId: string, chatId:
   await sendTelegramMessage(botKey, chatId, welcomeMessage().text, welcomeMessage().replyMarkup);
 }
 
+async function handleRemoveWatchCallback(
+  env: Env,
+  callbackQueryId: string,
+  watchId: string,
+  userId: number,
+  chatId: number,
+): Promise<void> {
+  const botKey = env.TELEGRAM_BOT_TOKEN;
+  if (!botKey || !env.DB) {
+    if (botKey) await answerCallbackQuery(botKey, callbackQueryId, "Watch management is temporarily unavailable.", true);
+    return;
+  }
+
+  const result = await removeWatchedUrlById(env.DB, String(userId), watchId);
+  if (result.removed) {
+    const watches = await listWatchedUrls(env.DB, String(userId));
+    await answerCallbackQuery(botKey, callbackQueryId, "Watching stopped.");
+    if (watches.length === 0) {
+      await sendTelegramMessage(botKey, chatId, "You're not watching any sites anymore.", mainMenuKeyboard());
+    } else {
+      await sendTelegramMessage(botKey, chatId, `Watching ${watches.length} site${watches.length === 1 ? '' : 's'}. Tap Remove next to one to stop watching it:`, watchesKeyboard(watches));
+    }
+  } else {
+    await answerCallbackQuery(botKey, callbackQueryId, "Couldn't stop watching that site.", true);
+  }
+}
+
 async function handleWebhook(
   request: Request,
   env: Env,
@@ -824,6 +874,9 @@ async function handleWebhook(
           await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId as number, "Tap Start Audit below for a static SEO audit (~0.5s).", mainMenuKeyboard());
         } else if (data === "jobs:refresh") {
           context.waitUntil(handleJobsCallback(env, userId as number, queryId, chatId as number));
+        } else if (/^rmwatch:/.test(data)) {
+          const watchId = data.slice(8);
+          context.waitUntil(handleRemoveWatchCallback(env, queryId, watchId, userId as number, chatId as number));
         } else if (data === "jobs:menu") {
           context.waitUntil(handleJobsMenuCallback(env, queryId, chatId as number));
         } else {

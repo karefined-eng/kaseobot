@@ -59,6 +59,19 @@ export async function removeWatchedUrl(
   return { removed: (result.meta?.changes ?? 0) > 0 };
 }
 
+export async function removeWatchedUrlById(
+  db: D1DatabaseLike,
+  telegramUserId: string,
+  watchId: string,
+): Promise<{ removed: boolean }> {
+  const result = await db
+    .prepare(`UPDATE watched_urls SET active = 0
+      WHERE watch_id = ? AND telegram_user_id = ? AND active = 1`)
+    .bind(watchId, telegramUserId)
+    .run();
+  return { removed: (result.meta?.changes ?? 0) > 0 };
+}
+
 export async function listWatchedUrls(
   db: D1DatabaseLike,
   telegramUserId: string,
