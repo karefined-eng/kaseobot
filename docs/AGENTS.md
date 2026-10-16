@@ -1,9 +1,9 @@
-# Kaseobot Agent Operating Manual
+# kaseomator Agent Operating Manual
 
 ## Start here
 
 1. Read [`origin.md`](origin.md) before proposing a scope, architecture, or user-workflow change.
-2. Treat the user-provided Kaseobot v1 BUILD_SPEC as the implementation contract; exploratory snippets are references, not proof that a feature is complete.
+2. Treat the user-provided kaseomator v1 BUILD_SPEC as the implementation contract; exploratory snippets are references, not proof that a feature is complete.
 3. Work one milestone at a time and stop after its implementation, tests, documentation, and handoff are complete.
 4. Keep secrets out of source, test output, logs, archives, and documentation. Never log Telegram Bot API request URLs because the token is embedded in the path.
 

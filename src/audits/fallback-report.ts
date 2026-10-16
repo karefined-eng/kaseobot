@@ -24,7 +24,7 @@ export function buildFallbackReport(audit: KaseobotAuditResult): string {
 
   const isGeo = audit.type === "geo_audit";
   const lines = [
-    `Kaseobot ${isGeo ? "GEO" : "SEO"} audit`,
+    `kaseomator ${isGeo ? "GEO" : "SEO"} audit`,
     `Website: ${truncate(audit.url, 420)}`,
   ];
   if (isGeo) {

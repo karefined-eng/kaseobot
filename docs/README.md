@@ -1,4 +1,4 @@
-# Kaseobot v1 — Milestone 6
+# kaseomator v1 — Milestone 6
 
 A private Telegram bot for static-HTML SEO audits and bounded multi-page GEO audits, running on Cloudflare Workers with a webhook, D1 job/result storage, and a Cloudflare Queue.
 
@@ -92,7 +92,7 @@ The fallback report includes requested/audited/failed page counts, measured GEO 
 
 `/history` lists up to 10 terminal jobs belonging only to the requesting Telegram user, with URL, type, status, and score when available. `/forget` deletes that user's D1 audit rows, jobs, and user row as a D1 batch. Queue result writes require the owning job to still exist and be running, so a forgotten in-flight job cannot recreate its local result. `/forget` cannot recall a message already delivered in Telegram or information already sent to NVIDIA before deletion.
 
-Failed jobs receive a **Retry audit** inline button. The callback is accepted only in the allowlisted user's private chat, only when the failed job belongs to that user, and only while the original job remains failed. Retrying creates a new job and preserves the original history row; normal active-job and hourly limits still apply. `/seomator <url>` validates the URL, displays it, and presents the public SEO and GEO tool links. The user chooses and submits the URL on SEOmator; Kaseobot neither auto-submits nor scrapes that site.
+Failed jobs receive a **Retry audit** inline button. The callback is accepted only in the allowlisted user's private chat, only when the failed job belongs to that user, and only while the original job remains failed. Retrying creates a new job and preserves the original history row; normal active-job and hourly limits still apply. `/seomator <url>` validates the URL, displays it, and presents the public SEO and GEO tool links. The user chooses and submits the URL on SEOmator; kaseomator neither auto-submits nor scrapes that site.
 
 Reports that exceed **3,500 characters** in their normal or Telegram-safe rendering are sent as a `.md` document. The Telegram caption includes the audit type, URL, overall score, failure/warning counts, and up to three measured priority issues. Shorter reports remain inline. The complete ordinary Markdown source is stored with the audit result for delivery retries.
 
@@ -102,7 +102,7 @@ When `NVIDIA_API_KEY` is present, the queue worker sends Kimi an allowlisted pro
 
 The Kimi client uses NVIDIA's OpenAI-compatible chat-completions API. It handles immediate `200` results and the documented `202` pending response by polling the returned `NVCF-REQID` at NVIDIA's `/v1/status/{requestId}` endpoint, within the configured timeout. The result's `ai` metadata records provider, model, success/error, request ID, and the final formatted report. Persisting the report lets queue redeliveries avoid another model call. Kimi returns ordinary Markdown; the formatter safely converts supported emphasis, links, lists, and code blocks to Telegram MarkdownV2, escaping other reserved characters.
 
-If the key is missing or the API times out, returns an error, or gives an invalid response, Kaseobot saves a short error and sends a deterministic MarkdownV2 report derived only from normalized findings. A retry after the report is saved reuses the same report.
+If the key is missing or the API times out, returns an error, or gives an invalid response, kaseomator saves a short error and sends a deterministic MarkdownV2 report derived only from normalized findings. A retry after the report is saved reuses the same report.
 
 ## Privacy and retention
 

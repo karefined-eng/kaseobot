@@ -155,7 +155,7 @@ describe("bounded GEO crawl and aggregation", () => {
     expect(audit.raw).toEqual(raw.output);
 
     const report = buildFallbackReport(audit);
-    expect(report).toContain("Kaseobot GEO audit");
+    expect(report).toContain("kaseomator GEO audit");
     expect(report).toContain("Pages: 5 requested, 5 audited, 0 failed.");
     expect(report).toContain("SEO findings:");
     expect(report).toContain("GEO findings:");

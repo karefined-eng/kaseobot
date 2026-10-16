@@ -235,7 +235,7 @@ async function sendMarkdownDocument(token: string, chatId: number, audit: Kaseob
   form.set("caption", toTelegramMarkdownV2(buildShortSummary(audit), 900));
   form.set("parse_mode", "MarkdownV2");
   const safeAuditId = audit.auditId.replace(/[^a-z0-9_-]/gi, "").slice(0, 64) || "report";
-  form.set("document", new Blob([markdown], { type: "text/markdown; charset=utf-8" }), `kaseobot-audit-${safeAuditId}.md`);
+  form.set("document", new Blob([markdown], { type: "text/markdown; charset=utf-8" }), `kaseomator-audit-${safeAuditId}.md`);
   return fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: "POST", body: form });
 }
 

@@ -234,7 +234,7 @@ describe("Kimi report orchestration and fallback", () => {
     expect(client.complete).not.toHaveBeenCalled();
     expect(result.ai).toMatchObject({ used: false, requestId: null });
     expect(result.ai.error).toContain("NVIDIA_API_KEY is not configured");
-    expect(result.markdownV2).toContain("Kaseobot SEO audit");
+    expect(result.markdownV2).toContain("kaseomator SEO audit");
   });
 
   it("treats invalid endpoint configuration as a fallback, not a queue failure", async () => {

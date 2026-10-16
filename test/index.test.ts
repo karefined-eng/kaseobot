@@ -124,7 +124,7 @@ describe("Telegram user access control", () => {
     const [, init] = telegramFetch.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toMatchObject({
       chat_id: 42,
-      text: "Welcome to Kaseobot — private SEO & GEO audit bot.\n\nTap a button below to start, or send a slash command such as /help.",
+      text: "Welcome to kaseomator — private SEO & GEO audit bot.\n\nTap a button below to start, or send a slash command such as /help.",
     });
   });
 
@@ -167,7 +167,7 @@ describe("command parsing and routing", () => {
   });
 
   it("routes the supported commands and handles unknown commands", () => {
-    expect(routeCommand({ name: "start", args: "" })).toContain("Welcome to Kaseobot");
+    expect(routeCommand({ name: "start", args: "" })).toContain("Welcome to kaseomator");
     expect(routeCommand({ name: "help", args: "" })).toContain("/status");
     expect(routeCommand({ name: "help", args: "" })).toContain("/geo <url>");
     expect(routeCommand({ name: "help", args: "" })).toContain("five same-origin pages");
@@ -824,6 +824,6 @@ describe("health check", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, service: "kaseobot" });
+    expect(await response.json()).toEqual({ ok: true, service: "kaseomator" });
   });
 });

@@ -1,4 +1,4 @@
-# Kaseobot — Private SEO/GEO Audit Bot for Telegram
+# kaseomator — Private SEO/GEO Audit Bot for Telegram
 
 [![Deploy to Cloudflare Workers](https://img.shields.io/badge/Deploy%20to-Cloudflare%20Workers-orange?logo=cloudflare)](https://deploy.workers.cloudflare.com/?url=https://github.com/karefined-eng/kaseobot)
 [![CI](https://github.com/karefined-eng/kaseobot/actions/workflows/deploy.yml/badge.svg)](https://github.com/karefined-eng/kaseobot/actions/workflows/deploy.yml)
@@ -204,7 +204,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 - **Issues**: [GitHub Issues](https://github.com/karefined-eng/kaseobot/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/karefined-eng/kaseobot/discussions)
-- **Telegram**: [@Kaseobot](https://t.me/Kaseobot) (demo bot)
+- **Telegram**: [@ka_seobot](https://t.me/ka_seobot) (demo bot)
 
 ---
 

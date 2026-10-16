@@ -16,11 +16,11 @@ A failed-job notice places a clearly labeled **Retry audit** button beside the f
 
 ### Offer SEOmator as a user-chosen external route
 
-`/seomator <url>` validates and displays the URL and shows two clearly labeled buttons for SEOmator's public SEO and GEO tools. Kaseobot does not submit the URL, scrape results, or claim to have run the external audit. This keeps third-party processing an explicit user choice.
+`/seomator <url>` validates and displays the URL and shows two clearly labeled buttons for SEOmator's public SEO and GEO tools. kaseomator does not submit the URL, scrape results, or claim to have run the external audit. This keeps third-party processing an explicit user choice.
 
 ### Put the short result in chat and preserve the full report as a file
 
-Reports longer than **3,500 characters** in either source Markdown or Telegram MarkdownV2 are sent as a short measured summary plus a complete `.md` document named `kaseobot-audit-{auditId}.md`. The caption includes audit type, URL, overall score, failed/warning counts, and up to three priority findings. Shorter reports remain inline. The complete source Markdown is persisted so a delivery retry does not need another Kimi request.
+Reports longer than **3,500 characters** in either source Markdown or Telegram MarkdownV2 are sent as a short measured summary plus a complete `.md` document named `kaseomator-audit-{auditId}.md`. The caption includes audit type, URL, overall score, failed/warning counts, and up to three priority findings. Shorter reports remain inline. The complete source Markdown is persisted so a delivery retry does not need another Kimi request.
 
 ### Use scheduled cleanup and disclose its cadence
 
@@ -35,4 +35,4 @@ A Cloudflare Cron Trigger at `0 3 * * *` (daily at 03:00 UTC) removes expired te
 
 ## Limits of this rationale
 
-The cited Nielsen Norman Group articles are usability guidance, not user research with Kaseobot's specific audience. The workflows should be checked with real users before later product expansion. Milestone 6 does not add a website UI, reports dashboard, SEOmator auto-submission, or PDF export.
+The cited Nielsen Norman Group articles are usability guidance, not user research with kaseomator's specific audience. The workflows should be checked with real users before later product expansion. Milestone 6 does not add a website UI, reports dashboard, SEOmator auto-submission, or PDF export.

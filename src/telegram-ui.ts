@@ -1,4 +1,5 @@
 import type { UserHistoryItem } from "./history";
+import type { WatchedUrl } from "./watch";
 
 export interface TelegramInlineKeyboard {
   inline_keyboard: Array<Array<{ text: string; url?: string; callback_data?: string }>>;
@@ -127,7 +128,7 @@ export function forgetConfirmKeyboard(): TelegramInlineKeyboard {
 export function welcomeMessage(): { text: string; replyMarkup: TelegramReplyKeyboard } {
   return {
     text:
-      "Welcome to Kaseobot — private SEO & GEO audit bot.\n\n" +
+      "Welcome to kaseomator — private SEO & GEO audit bot.\n\n" +
       "Tap a button below to start, or send a slash command such as /help.",
     replyMarkup: mainMenuKeyboard(),
   };
@@ -136,7 +137,7 @@ export function welcomeMessage(): { text: string; replyMarkup: TelegramReplyKeyb
 export function helpMessage(): { text: string; replyMarkup: TelegramReplyKeyboard } {
   return {
     text:
-      "Kaseobot — button-first commands:\n\n" +
+      "kaseomator — button-first commands:\n\n" +
       "• Start Audit — enqueue a one-page SEO audit\n" +
       "• GEO Crawl — crawl up to five same-origin pages\n" +
       "• Check Status — view job progress\n" +
@@ -192,6 +193,23 @@ export function deepAuditCostMessage(url: string, jobId: string): string {
   );
 }
 
+
+export function watchesKeyboard(watches: WatchedUrl[]): TelegramInlineKeyboard {
+  return {
+    inline_keyboard: [
+      ...watches.slice(0, 10).map((watch) => [
+        { text: 'Remove ' + watch.url.slice(0, 40), callback_data: 'rmwatch:' + watch.watch_id },
+      ]),
+      [{ text: 'Main menu', callback_data: 'jobs:menu' }],
+    ],
+  };
+}
+
+export function watchAckKeyboard(watchId: string): TelegramInlineKeyboard {
+  return {
+    inline_keyboard: [[{ text: 'Stop watching', callback_data: 'rmwatch:' + watchId }]],
+  };
+}
 export async function answerCallbackQuery(botKey: string, callbackQueryId: string, text?: string, showAlert = false): Promise<void> {
   try {
     await fetch(`https://api.telegram.org/bot${botKey}/answerCallbackQuery`, {

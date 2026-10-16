@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- tool/badge container -->
+  <rect x="4" y="4" width="24" height="24" rx="6"/>
+  <!-- K vertical spine -->
+  <path d="M10 8V24"/>
+  <!-- K upper arm -->
+  <path d="M10 12L22 8"/>
+  <!-- K lower arm as ascending audit line -->
+  <path d="M10 20L24 12"/>
+</svg>
