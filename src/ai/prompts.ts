@@ -23,6 +23,7 @@ export function buildKimiUserPrompt(audit: KaseobotAuditResult, filtered: Filter
     `Website: ${audit.url}`,
     `Audit type: ${audit.type}`,
     `Overall score: ${score}`,
+    `Checks: ${audit.summary.passed} passed, ${audit.summary.warnings} warnings, ${audit.summary.failed} failed, ${audit.summary.skipped} not measured.`,
     "",
     "Audit findings JSON:",
     JSON.stringify(filtered, null, 2),

@@ -23,7 +23,7 @@ export function formatHistory(items: UserHistoryItem[]): string {
     const url = item.url.length > 180 ? `${item.url.slice(0, 177)}...` : item.url;
     const when = item.created_at.replace("T", " ").slice(0, 16);
     const label = item.type === "geo_audit" ? "GEO" : "SEO";
-    const score = item.overall_score === null ? "" : ` · ${item.overall_score}/100`;
+    const score = item.overall_score === null ? " · not measured" : ` · ${item.overall_score}/100`;
     return `• ${label} · ${item.status}${score}\n  ${url}\n  ${when} · /status ${item.job_id}`;
   });
   return `Your recent audits (up to 10):\n\n${lines.join("\n\n")}\n\nUse /forget to delete your saved audit history.`;

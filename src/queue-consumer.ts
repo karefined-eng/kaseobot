@@ -224,6 +224,7 @@ function buildShortSummary(audit: KaseobotAuditResult): string {
     `Website: ${audit.url}`,
     `Overall score: ${audit.overallScore === null ? "not available" : `${audit.overallScore}/100`}`,
     `Findings: ${audit.summary.failed} failed, ${audit.summary.warnings} warnings`,
+    `Findings: ${audit.summary.failed} failed, ${audit.summary.warnings} warnings, ${audit.summary.skipped} not measured`,
   ];
   if (audit.geo) lines.push(`Pages: ${audit.geo.pagesAudited} audited, ${audit.geo.pagesFailed} failed of ${audit.geo.pagesRequested} requested`);
   const priorities = audit.categories.flatMap((category) => category.findings
