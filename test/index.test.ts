@@ -124,7 +124,7 @@ describe("Telegram user access control", () => {
     const [, init] = telegramFetch.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toMatchObject({
       chat_id: 42,
-      text: "Welcome to Kaseobot.\n\nUse /help to see available commands.",
+      text: "Welcome to Kaseobot — private SEO & GEO audit bot.\n\nTap a button below to start, or send a slash command such as /help.",
     });
   });
 

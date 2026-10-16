@@ -108,6 +108,19 @@ async function getJobForUpdate(db: D1DatabaseLike, updateId: string, userId: str
     .first<JobRow>();
 }
 
+export async function getJobsForUser(
+  db: D1DatabaseLike,
+  userId: string,
+  statuses: JobStatus[],
+): Promise<JobRow[]> {
+  if (statuses.length === 0) return [];
+  const placeholders = statuses.map(() => '?').join(',');
+  return db.prepare(`${JOB_SELECT} WHERE telegram_user_id = ? AND status IN (${placeholders}) ORDER BY created_at DESC`)
+    .bind(userId, ...statuses)
+    .all<JobRow>()
+    .then((result) => result.results ?? []);
+}
+
 function toQueueMessage(job: JobRow): AuditJobMessage {
   return {
     jobId: job.job_id,

@@ -3,6 +3,7 @@ import {
   createAuditJob,
   getJobForUser,
   getJobStatusMessage,
+  getJobsForUser,
   UserFacingError,
   type AuditQueueLike,
   type D1DatabaseLike,
@@ -13,11 +14,25 @@ import { clampGeoPageLimit } from "./audits/geo-links";
 import { cleanupExpiredHistory, forgetUserHistory, getUserHistory } from "./history";
 import {
   answerCallbackQuery,
+  chunkedResultsKeyboard,
+  dataPrivacyKeyboard,
+  deepAuditConfirmKeyboard,
+  deepAuditCostMessage,
   formatHistory,
+  forgetConfirmKeyboard,
+  helpMessage,
+  jobAckKeyboard,
+  jobAcknowledgment,
+  jobsKeyboard,
+  jobsMessage,
+  mainMenuKeyboard,
+  menuLabelToCommand,
   retryKeyboard,
   seomatorKeyboard,
   updateIdFrom,
+  welcomeMessage,
   type TelegramInlineKeyboard,
+  type TelegramReplyKeyboard,
 } from "./telegram-ui";
 import { validateAndNormalizeUrl } from "./url-validation";
 import type { SeomatorContainerNamespace } from "./seomator-container";
@@ -60,6 +75,21 @@ interface TelegramMessage {
 const WEBHOOK_PATH = "/telegram/webhook";
 const HEALTH_PATH = "/healthz";
 
+// Commands registered in Telegram's left-side / menu.
+const BOT_COMMANDS = [
+  { command: "start", description: "Start the bot and show the main menu" },
+  { command: "help", description: "Show available commands" },
+  { command: "audit", description: "Enqueue a one-page SEO audit" },
+  { command: "geo", description: "GEO crawl of up to five same-origin pages" },
+  { command: "deepaudit", description: "Full SEOmator deep audit (paid plan)" },
+  { command: "jobs", description: "Show in-progress audits" },
+  { command: "status", description: "Check an audit job" },
+  { command: "cancel", description: "Cancel a queued job" },
+  { command: "history", description: "List recent audits" },
+  { command: "forget", description: "Delete all saved data" },
+  { command: "privacy", description: "Show data-handling information" },
+];
+
 export function parseTelegramCommand(text: string): ParsedCommand | null {
   const match = /^\/([a-z0-9_]+)(?:@([a-z0-9_]+))?(?:\s+([\s\S]*))?$/i.exec(text.trim());
   if (!match) return null;
@@ -75,7 +105,7 @@ export function parseTelegramCommand(text: string): ParsedCommand | null {
 export function routeCommand(command: ParsedCommand): string {
   switch (command.name) {
     case "start":
-      return "Welcome to Kaseobot.\n\nUse /help to see available commands.";
+      return "Welcome to Kaseobot. Tap a button below, or send /help.";
     case "help":
       return [
         "Kaseobot commands:",
@@ -84,6 +114,7 @@ export function routeCommand(command: ParsedCommand): string {
         "/audit <url> — enqueue a one-page SEO audit",
         "/geo <url> — enqueue a GEO crawl of up to five same-origin pages",
         "/deepaudit <url> [--type=seo-full|geo|quick|custom] [--categories=...] [--crawl] [--max-pages=N] [--mobile] — run full SEOmator engine via Container (requires Workers Paid plan)",
+        "/jobs — show in-progress audits",
         "/status <job_id> — check an audit job",
         "/cancel <job_id> — cancel a queued job",
         "/history — list your recent audits",
@@ -152,13 +183,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function sendTelegramMessage(
-  botTokenParam: string,
+  botKey: string,
   chatId: number,
   text: string,
-  replyMarkup?: TelegramInlineKeyboard,
+  replyMarkup?: TelegramInlineKeyboard | TelegramReplyKeyboard,
 ): Promise<void> {
   try {
-    await fetch("https://api.telegram.org/bot" + botTokenParam + "/sendMessage", {
+    await fetch("https://api.telegram.org/bot" + botKey + "/sendMessage", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -172,60 +203,111 @@ async function sendTelegramMessage(
   }
 }
 
-function jobAcknowledgment(
-  jobId: string,
-  url: string,
-  status: string,
-  type: "seo_audit" | "geo_audit" = "seo_audit",
-  maxPages = 5,
-): string {
-  const label = type === "geo_audit" ? "GEO audit" : "SEO audit";
-  if (status === "failed") {
-    return "The " + label.toLowerCase() + " job could not be queued or processed.\nWebsite: " + url + "\nJob ID: " + jobId + "\nUse /status " + jobId + " for details.";
-  }
-  const crawlNote = type === "geo_audit" ? "\nCrawling up to " + maxPages + " same-origin pages." : "";
-  return label + " job accepted.\nWebsite: " + url + "\nJob ID: " + jobId + "\nStatus: " + status + crawlNote + "\nUse /status " + jobId + " to check progress.";
-}
-
-async function handleBulkAudit(
-  env: Env,
-  rawArgs: string,
-  userId: number,
-  chatId: number,
-  updateId: number | null,
-): Promise<string> {
-  if (!env.DB || !env.AUDIT_QUEUE) throw new Error("Audit storage or queue is not configured.");
-
-  const tokens = rawArgs.split(/\s+/).filter((token) => token.length > 0);
-  if (tokens.length < 1 || tokens.length > 5) {
-    return "Send 1 to 5 URLs, separated by spaces, for example: /bulk https://example.com https://example.org.";
-  }
-
-  const validatedUrls: string[] = [];
-  for (const token of tokens) {
-    const validated = validateAndNormalizeUrl(token);
-    if (!validated.ok) return validated.error;
-    validatedUrls.push(validated.url);
-  }
-
-  const createdIds: string[] = [];
-  for (const url of validatedUrls) {
-    const result = await createAuditJob(env, {
-      telegramUserId: userId,
-      chatId,
-      url,
-      // Bulk audits are not update_id deduplicated: each URL must become its own job.
-      updateId: null,
+async function registerBotCommands(botKey: string): Promise<void> {
+  try {
+    await fetch("https://api.telegram.org/bot" + botKey + "/setMyCommands", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ commands: BOT_COMMANDS }),
     });
-    if (result.job.status === "failed") {
-      return result.job.error ?? "An audit job could not be created.";
-    }
-    createdIds.push(result.job.job_id);
+  } catch {
+    // Best effort; commands are a nice-to-have, not required for bot function.
   }
-
-  const list = createdIds.map((id, index) => `${index + 1}. ${validatedUrls[index]} — job ${id.slice(0, 8)}`).join("\n");
-  return "Bulk audit accepted.\n" + list + "\n\nEach URL is audited separately. Check /status <job_id> for progress.";
 }
+
+/*────────────────────────────────────────────────────────────────────────────
+  User state (two-step URL flow)
+────────────────────────────────────────────────────────────────────────────*/
+
+type PendingUrl = { kind: "audit" | "geo"; jobId?: string };
+
+async function getUserState(db: D1DatabaseLike, userId: string): Promise<string | null> {
+  try {
+    const row = await db.prepare(`SELECT state FROM user_state WHERE telegram_user_id = ?`)
+      .bind(userId)
+      .first<{ state: string }>();
+    return row?.state ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function setUserState(db: D1DatabaseLike, userId: string, state: string | null): Promise<void> {
+  try {
+    if (state === null) {
+      await db.prepare(`DELETE FROM user_state WHERE telegram_user_id = ?`).bind(userId).run();
+      return;
+    }
+    await db.prepare(`INSERT INTO user_state (telegram_user_id, state, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(telegram_user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`)
+      .bind(userId, state, new Date().toISOString())
+      .run();
+  } catch {
+    // State persistence is best-effort; the URL flow still works without it.
+  }
+}
+
+function parsePendingUrl(state: string | null): PendingUrl | null {
+  if (state === "awaiting_url:audit") return { kind: "audit" };
+  if (state === "awaiting_url:geo") return { kind: "geo" };
+  return null;
+}
+
+/*────────────────────────────────────────────────────────────────────────────
+  Message sending with optional reply keyboard
+────────────────────────────────────────────────────────────────────────────*/
+
+async function sendWithMenu(
+  env: Env,
+  chatId: number,
+  text: string,
+  replyMarkup?: TelegramInlineKeyboard | TelegramReplyKeyboard,
+): Promise<void> {
+  await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN ?? "", chatId, text, replyMarkup);
+}
+
+/*────────────────────────────────────────────────────────────────────────────
+  Jobs view — in-progress audits
+────────────────────────────────────────────────────────────────────────────*/
+
+async function buildJobsView(
+  db: D1DatabaseLike,
+  userId: number,
+  now = Date.now(),
+): Promise<{ text: string; replyMarkup: TelegramInlineKeyboard }> {
+  const jobs = await getJobsForUser(db, String(userId), ["queued", "running", "cancel_requested"]);
+  const items = jobs.map((job) => {
+    const createdMs = Date.parse(job.created_at);
+    const elapsed = Number.isFinite(createdMs)
+      ? formatElapsed(Math.max(0, now - createdMs))
+      : "unknown";
+    return {
+      job_id: job.job_id,
+      url: job.url,
+      status: job.status,
+      type: job.type,
+      created_at: job.created_at,
+      elapsed,
+    };
+  });
+  return {
+    text: jobsMessage(items),
+    replyMarkup: jobsKeyboard(),
+  };
+}
+
+function formatElapsed(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+/*────────────────────────────────────────────────────────────────────────────
+  Authorized message handling
+────────────────────────────────────────────────────────────────────────────*/
 
 async function handleAuthorizedMessage(
   env: Env,
@@ -236,16 +318,80 @@ async function handleAuthorizedMessage(
 ): Promise<void> {
   if (!env.TELEGRAM_BOT_TOKEN) return;
 
-  const command = typeof message.text === "string" ? parseTelegramCommand(message.text) : null;
+  const rawText = typeof message.text === "string" ? message.text.trim() : "";
+  const command = rawText ? parseTelegramCommand(rawText) : null;
+
+  // --- URL state machine: plain text while awaiting a URL ---
+  if (command === null && rawText.length > 0) {
+    const state = await getUserState(env.DB, String(userId));
+    const pending = parsePendingUrl(state);
+    if (pending) {
+      await setUserState(env.DB, String(userId), null);
+      const validated = validateAndNormalizeUrl(rawText);
+      if (!validated.ok) {
+        await sendWithMenu(env, chatId, validated.error, mainMenuKeyboard());
+        return;
+      }
+      const result = await createAuditJob(env, {
+        telegramUserId: userId,
+        chatId,
+        url: validated.url,
+        updateId,
+        type: pending.kind === "geo" ? "geo_audit" : "seo_audit",
+      });
+      const type = pending.kind === "geo" ? "geo_audit" : "seo_audit";
+      const maxPages = clampGeoPageLimit(env.GEO_MAX_PAGES);
+      const ack = jobAcknowledgment(result.job.job_id, result.job.url, result.job.status, type, maxPages);
+      await sendWithMenu(env, chatId, ack, result.job.status === "failed" ? retryKeyboard(result.job.job_id) : jobAckKeyboard(result.job.job_id));
+      return;
+    }
+  }
+
+  // --- Button labels route to the same handlers as slash commands ---
+  if (command === null) {
+    const mapped = menuLabelToCommand(rawText);
+    if (mapped) {
+      if (mapped === "/status") {
+        await sendWithMenu(env, chatId, "Send /status <job_id> to check a specific job, or tap /jobs to see in-progress audits.", mainMenuKeyboard());
+        return;
+      }
+      if (mapped === "/cancel") {
+        await sendWithMenu(env, chatId, "Send /cancel <job_id> to cancel a specific job.", mainMenuKeyboard());
+        return;
+      }
+      if (mapped === "/jobs") {
+        const { text, replyMarkup } = await buildJobsView(env.DB, userId);
+        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, text, replyMarkup);
+        return;
+      }
+      await routeMappedCommand(env, mapped.slice(1), chatId, userId, updateId, mainMenuKeyboard());
+      return;
+    }
+    await sendWithMenu(env, chatId, "Tap a button below, or send /help to see available commands.", mainMenuKeyboard());
+    return;
+  }
+
   let reply: string;
-  let replyMarkup: TelegramInlineKeyboard | undefined;
+  let replyMarkup: TelegramInlineKeyboard | TelegramReplyKeyboard | undefined;
   try {
-    if (!command) {
-      reply = "Please use a slash command. Send /help to see available commands.";
+    if (command.name === "start") {
+      const { text, replyMarkup: markup } = welcomeMessage();
+      reply = text;
+      replyMarkup = markup;
+    } else if (command.name === "help") {
+      const { text, replyMarkup: markup } = helpMessage();
+      reply = text;
+      replyMarkup = markup;
+    } else if (command.name === "jobs") {
+      const { text, replyMarkup: markup } = await buildJobsView(env.DB, userId);
+      reply = text;
+      replyMarkup = markup;
     } else if (command.name === "audit") {
       const validated = validateAndNormalizeUrl(command.args);
       if (!validated.ok) {
-        reply = validated.error;
+        reply = validated.error + "\n\nSend me the URL to audit, or tap Start Audit again.";
+        await setUserState(env.DB, String(userId), "awaiting_url:audit");
+        replyMarkup = mainMenuKeyboard();
       } else {
         const result = await createAuditJob(env, {
           telegramUserId: userId,
@@ -255,11 +401,14 @@ async function handleAuthorizedMessage(
         });
         reply = jobAcknowledgment(result.job.job_id, result.job.url, result.job.status);
         if (result.job.status === "failed") replyMarkup = retryKeyboard(result.job.job_id);
+        else replyMarkup = jobAckKeyboard(result.job.job_id);
       }
     } else if (command.name === "geo") {
       const validated = validateAndNormalizeUrl(command.args);
       if (!validated.ok) {
-        reply = validated.error;
+        reply = validated.error + "\n\nSend me the URL to crawl, or tap GEO Crawl again.";
+        await setUserState(env.DB, String(userId), "awaiting_url:geo");
+        replyMarkup = mainMenuKeyboard();
       } else {
         const result = await createAuditJob(env, {
           telegramUserId: userId,
@@ -276,6 +425,7 @@ async function handleAuthorizedMessage(
           clampGeoPageLimit(env.GEO_MAX_PAGES),
         );
         if (result.job.status === "failed") replyMarkup = retryKeyboard(result.job.job_id);
+        else replyMarkup = jobAckKeyboard(result.job.job_id);
       }
     } else if (command.name === "deepaudit") {
       const validated = validateAndNormalizeUrl(command.args);
@@ -284,10 +434,9 @@ async function handleAuthorizedMessage(
       } else if (!env.SEOMATOR_CONTAINER) {
         reply = "Deep audit engine (SEOmator Container) is not configured. Use /audit for static checks or /seomator for external tools.";
       } else {
-        // Parse: /deepaudit <url> [--type=seo-full|geo|quick|custom] [--categories=...] [--crawl] [--max-pages=N] [--mobile]
+        // Parse options from args for storage in pending deep-audit state.
         const args = command.args.split(/\s+/);
-        const url = validated.url;
-        const options: Record<string, unknown> = { url };
+        const options: Record<string, unknown> = { url: validated.url };
         for (const arg of args.slice(1)) {
           if (arg.startsWith("--type=")) options.auditType = arg.slice(7);
           else if (arg.startsWith("--categories=")) options.categories = arg.slice(13);
@@ -298,48 +447,27 @@ async function handleAuthorizedMessage(
           else if (arg.startsWith("--timeout=")) options.timeout = parseInt(arg.slice(10), 10);
           else if (arg.startsWith("--user-agent=")) options.userAgent = arg.slice(13);
         }
-        const controller = new AbortController();
-        const timeoutMs = 300000;
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-          const stub = env.SEOMATOR_CONTAINER.get(env.SEOMATOR_CONTAINER.idFromName("seomator"));
-          const response = await stub.fetch("http://container/audit", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(options),
-            signal: controller.signal,
-          });
-          clearTimeout(timeoutId);
-          if (!response.ok) {
-            const err = await response.text();
-            reply = /workers paid|unauthorized|entitlement/i.test(err)
-              ? "Deep audit needs the Cloudflare Workers Paid plan ($5/mo) - Cloudflare Containers has no free tier. /audit and /geo work on the free plan."
-              : "Deep audit failed (" + response.status + "): " + err.slice(0, 200);
-          } else {
-            const markdown = await response.text();
-            reply = markdown;
-          }
-        } catch (err: unknown) {
-          clearTimeout(timeoutId);
-          const message = err instanceof Error ? err.message : String(err);
-          reply = /workers paid|unauthorized|entitlement/i.test(message)
-            ? "Deep audit needs the Cloudflare Workers Paid plan ($5/mo) - Cloudflare Containers has no free tier. /audit and /geo work on the free plan."
-            : "Deep audit error: " + message;
-        }
+        const jobId = crypto.randomUUID();
+        await env.DB.prepare(`INSERT INTO user_state (telegram_user_id, state, updated_at) VALUES (?, ?, ?)
+          ON CONFLICT(telegram_user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`)
+          .bind(String(userId), `awaiting_deep_confirm:${jobId}:${JSON.stringify(options)}`, new Date().toISOString())
+          .run();
+        reply = deepAuditCostMessage(validated.url, jobId);
+        replyMarkup = deepAuditConfirmKeyboard(jobId);
       }
-    } else if (command.name === "bulk") {
-      reply = await handleBulkAudit(env, command.args, userId, chatId, updateId);
     } else if (command.name === "status") {
       reply = await getJobStatusMessage(env.DB, command.args || undefined, userId);
+      replyMarkup = mainMenuKeyboard();
     } else if (command.name === "cancel") {
       reply = await cancelAuditJob(env.DB, command.args || undefined, userId);
+      replyMarkup = mainMenuKeyboard();
     } else if (command.name === "history") {
-      if (!env.DB) throw new Error("Audit storage is not configured.");
       reply = formatHistory(await getUserHistory(env.DB, String(userId)));
+      replyMarkup = mainMenuKeyboard();
     } else if (command.name === "forget") {
-      if (!env.DB) throw new Error("Audit storage is not configured.");
       await forgetUserHistory(env.DB, String(userId));
       reply = "Your saved audit history and reports have been deleted. This cannot remove copies already delivered in Telegram or information already sent to NVIDIA.";
+      replyMarkup = mainMenuKeyboard();
     } else if (command.name === "seomator") {
       const validated = validateAndNormalizeUrl(command.args);
       if (!validated.ok) {
@@ -348,8 +476,12 @@ async function handleAuthorizedMessage(
         reply = "Open SEOmator's hosted tools for this website:\n" + validated.url + "\n\nChoose a tool below. SEOmator runs it on its website; Kaseobot does not submit the URL or store that external audit.";
         replyMarkup = seomatorKeyboard();
       }
+    } else if (command.name === "privacy") {
+      reply = routeCommand(command);
+      replyMarkup = mainMenuKeyboard();
     } else {
       reply = routeCommand(command);
+      replyMarkup = mainMenuKeyboard();
     }
   } catch (error) {
     reply = error instanceof UserFacingError
@@ -357,8 +489,41 @@ async function handleAuthorizedMessage(
       : "I couldn't complete that request right now. Please try again later.";
   }
 
-  await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, reply, replyMarkup);
+  await sendWithMenu(env, chatId, reply, replyMarkup);
 }
+
+async function routeMappedCommand(
+  env: Env,
+  name: string,
+  chatId: number,
+  userId: number,
+  updateId: number | null,
+  replyMarkup: TelegramReplyKeyboard,
+): Promise<void> {
+  if (!env.TELEGRAM_BOT_TOKEN || !env.DB) return;
+  switch (name) {
+    case "start":
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, welcomeMessage().text, replyMarkup);
+      break;
+    case "help":
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, helpMessage().text, replyMarkup);
+      break;
+    case "jobs": {
+      const { text, replyMarkup: markup } = await buildJobsView(env.DB, userId);
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, text, markup);
+      break;
+    }
+    case "privacy":
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, routeCommand({ name: "privacy", args: "" }), replyMarkup);
+      break;
+    default:
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Use /" + name + " <url> to run that command.", replyMarkup);
+  }
+}
+
+/*────────────────────────────────────────────────────────────────────────────
+  Callback query handling (inline buttons)
+────────────────────────────────────────────────────────────────────────────*/
 
 async function handleRetryCallback(
   env: Env,
@@ -368,28 +533,29 @@ async function handleRetryCallback(
   chatId: number,
   updateId: number | null,
 ): Promise<void> {
-  if (!env.TELEGRAM_BOT_TOKEN) return;
+  const botKey = env.TELEGRAM_BOT_TOKEN;
+  if (!botKey) return;
   const match = typeof callbackData === "string" && new TextEncoder().encode(callbackData).byteLength <= 64
     ? /^retry:([a-z0-9_-]{1,48})$/i.exec(callbackData)
     : null;
   if (!match) {
-    await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQueryId, "This button is no longer available.");
+    await answerCallbackQuery(botKey, callbackQueryId, "This button is no longer available.");
     return;
   }
   if (!env.DB || !env.AUDIT_QUEUE) {
-    await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQueryId, "Retry is temporarily unavailable.", true);
+    await answerCallbackQuery(botKey, callbackQueryId, "Retry is temporarily unavailable.", true);
     return;
   }
 
   try {
     const job = await getJobForUser(env.DB, match[1], String(userId));
     if (!job || job.status !== "failed") {
-      await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQueryId, "This retry is no longer available.");
+      await answerCallbackQuery(botKey, callbackQueryId, "This retry is no longer available.");
       return;
     }
     const validated = validateAndNormalizeUrl(job.url);
     if (!validated.ok) {
-      await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQueryId, "The saved URL is no longer valid.", true);
+      await answerCallbackQuery(botKey, callbackQueryId, "The saved URL is no longer valid.", true);
       return;
     }
     const retried = await createAuditJob(env, {
@@ -407,20 +573,144 @@ async function handleRetryCallback(
       clampGeoPageLimit(env.GEO_MAX_PAGES),
     );
     await answerCallbackQuery(
-      env.TELEGRAM_BOT_TOKEN,
+      botKey,
       callbackQueryId,
       retried.job.status === "queued" ? "Retry queued." : "A new job was created but could not be queued.",
     );
     await sendTelegramMessage(
-      env.TELEGRAM_BOT_TOKEN,
+      botKey,
       chatId,
       message,
-      retried.job.status === "failed" ? retryKeyboard(retried.job.job_id) : undefined,
+      retried.job.status === "failed" ? retryKeyboard(retried.job.job_id) : jobAckKeyboard(retried.job.job_id),
     );
   } catch (error) {
     const message = error instanceof UserFacingError ? error.message : "Retry could not be started. Please try again later.";
-    await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQueryId, message, true);
+    await answerCallbackQuery(botKey, callbackQueryId, message, true);
   }
+}
+
+async function handleStatusCallback(env: Env, jobId: string, userId: number, callbackQueryId: string, chatId: number): Promise<void> {
+  const botKey = env.TELEGRAM_BOT_TOKEN;
+  if (!botKey || !env.DB) {
+    if (botKey) await answerCallbackQuery(botKey, callbackQueryId, "Status is temporarily unavailable.", true);
+    return;
+  }
+  const statusText = await getJobStatusMessage(env.DB, jobId, userId);
+  await answerCallbackQuery(botKey, callbackQueryId, statusText.slice(0, 200), true);
+  await sendTelegramMessage(botKey, chatId, statusText, mainMenuKeyboard());
+}
+
+async function handleCancelCallback(env: Env, jobId: string, userId: number, callbackQueryId: string, chatId: number): Promise<void> {
+  const botKey = env.TELEGRAM_BOT_TOKEN;
+  if (!botKey || !env.DB) {
+    if (botKey) await answerCallbackQuery(botKey, callbackQueryId, "Cancel is temporarily unavailable.", true);
+    return;
+  }
+  const result = await cancelAuditJob(env.DB, jobId, userId);
+  await answerCallbackQuery(botKey, callbackQueryId, result);
+  await sendTelegramMessage(botKey, chatId, result, mainMenuKeyboard());
+}
+
+async function handleDeepConfirmCallback(
+  env: Env,
+  jobId: string,
+  userId: number,
+  callbackQueryId: string,
+  chatId: number,
+  proceed: boolean,
+): Promise<void> {
+  const botKey = env.TELEGRAM_BOT_TOKEN;
+  if (!botKey || !env.DB || !env.SEOMATOR_CONTAINER) {
+    if (botKey) await answerCallbackQuery(botKey, callbackQueryId, "Deep audit is temporarily unavailable.", true);
+    return;
+  }
+
+  const userIdStr = String(userId);
+  const row = await env.DB.prepare(`SELECT state FROM user_state WHERE telegram_user_id = ?`)
+    .bind(userIdStr)
+    .first<{ state: string }>();
+  const state = row?.state ?? null;
+  const match = state ? /^awaiting_deep_confirm:([a-z0-9-]+):(.+)$/s.exec(state) : null;
+  if (!match || match[1] !== jobId) {
+    await answerCallbackQuery(botKey, callbackQueryId, "This deep-audit confirmation is no longer available.");
+    return;
+  }
+
+  if (!proceed) {
+    await env.DB.prepare(`DELETE FROM user_state WHERE telegram_user_id = ?`).bind(userIdStr).run();
+    await answerCallbackQuery(botKey, callbackQueryId, "Deep audit cancelled.");
+    await sendTelegramMessage(botKey, chatId, "Deep audit cancelled. Tap Start Audit for a static SEO audit instead.", mainMenuKeyboard());
+    return;
+  }
+
+  let options: Record<string, unknown>;
+  try {
+    options = JSON.parse(match[2]);
+  } catch {
+    await env.DB.prepare(`DELETE FROM user_state WHERE telegram_user_id = ?`).bind(userIdStr).run();
+    await answerCallbackQuery(botKey, callbackQueryId, "The deep-audit options could not be read.", true);
+    return;
+  }
+
+  // Clear state before the long container call.
+  await env.DB.prepare(`DELETE FROM user_state WHERE telegram_user_id = ?`).bind(userIdStr).run();
+  await answerCallbackQuery(botKey, callbackQueryId, "Deep audit started.");
+
+  const url = typeof options.url === "string" ? options.url : "";
+  const validated = validateAndNormalizeUrl(url);
+  if (!validated.ok) {
+    await sendTelegramMessage(botKey, chatId, "That URL is no longer valid.", mainMenuKeyboard());
+    return;
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = 300000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const stub = env.SEOMATOR_CONTAINER.get(env.SEOMATOR_CONTAINER.idFromName("seomator"));
+    const response = await stub.fetch("http://container/audit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) {
+      const err = await response.text();
+      const text = /workers paid|unauthorized|entitlement/i.test(err)
+        ? "Deep audit needs the Cloudflare Workers Paid plan ($5/mo) - Cloudflare Containers has no free tier. /audit and /geo work on the free plan."
+        : "Deep audit failed (" + response.status + "): " + err.slice(0, 200);
+      await sendTelegramMessage(botKey, chatId, text, mainMenuKeyboard());
+    } else {
+      const markdown = await response.text();
+      await sendTelegramMessage(botKey, chatId, markdown, mainMenuKeyboard());
+    }
+  } catch (err: unknown) {
+    clearTimeout(timeoutId);
+    const message = err instanceof Error ? err.message : String(err);
+    const text = /workers paid|unauthorized|entitlement/i.test(message)
+      ? "Deep audit needs the Cloudflare Workers Paid plan ($5/mo) - Cloudflare Containers has no free tier. /audit and /geo work on the free plan."
+      : "Deep audit error: " + message;
+    await sendTelegramMessage(botKey, chatId, text, mainMenuKeyboard());
+  }
+}
+
+async function handleJobsCallback(env: Env, userId: number, callbackQueryId: string, chatId: number): Promise<void> {
+  const botKey = env.TELEGRAM_BOT_TOKEN;
+  if (!botKey || !env.DB) {
+    if (botKey) await answerCallbackQuery(botKey, callbackQueryId, "Jobs view is temporarily unavailable.", true);
+    return;
+  }
+  const { text, replyMarkup } = await buildJobsView(env.DB, userId);
+  await answerCallbackQuery(botKey, callbackQueryId, "Jobs updated.");
+  await sendTelegramMessage(botKey, chatId, text, replyMarkup);
+}
+
+async function handleJobsMenuCallback(env: Env, callbackQueryId: string, chatId: number): Promise<void> {
+  const botKey = env.TELEGRAM_BOT_TOKEN;
+  if (!botKey) return;
+  await answerCallbackQuery(botKey, callbackQueryId, "Main menu.");
+  await sendTelegramMessage(botKey, chatId, welcomeMessage().text, welcomeMessage().replyMarkup);
 }
 
 async function handleWebhook(
@@ -455,7 +745,62 @@ async function handleWebhook(
       typeof chatId === "number" && Number.isSafeInteger(chatId) && chat?.type === "private" &&
       chatId === userId && from?.is_bot !== true && isAllowedUser(userId, env.ALLOWED_TELEGRAM_USER_IDS);
     if (queryId && env.TELEGRAM_BOT_TOKEN && authorized) {
-      context.waitUntil(handleRetryCallback(env, queryId, query.data, userId as number, chatId as number, updateIdFrom(update)));
+      const data = query.data;
+      if (typeof data === "string") {
+        if (/^retry:/.test(data)) {
+          context.waitUntil(handleRetryCallback(env, queryId, data, userId as number, chatId as number, updateIdFrom(update)));
+        } else if (/^stat:/.test(data)) {
+          const jobId = data.slice(5);
+          context.waitUntil(handleStatusCallback(env, jobId, userId as number, queryId, chatId as number));
+        } else if (/^cncl:/.test(data) && !/^cncl:deep:/.test(data)) {
+          const jobId = data.slice(5);
+          context.waitUntil(handleCancelCallback(env, jobId, userId as number, queryId, chatId as number));
+        } else if (/^cnfm:deep:/.test(data)) {
+          const jobId = data.slice(11);
+          context.waitUntil(handleDeepConfirmCallback(env, jobId, userId as number, queryId, chatId as number, true));
+        } else if (/^cncl:deep:/.test(data)) {
+          const jobId = data.slice(10);
+          context.waitUntil(handleDeepConfirmCallback(env, jobId, userId as number, queryId, chatId as number, false));
+        } else if (/^more:/.test(data)) {
+          const parts = data.split(":");
+          const jobId = parts[1];
+          const nextOffset = parts[2] ? parseInt(parts[2], 10) : 0;
+          context.waitUntil(answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "More fixes coming in the next update."));
+        } else if (/^rpt:/.test(data)) {
+          const jobId = data.slice(4);
+          context.waitUntil(answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Full report: use /status " + jobId));
+        } else if (/^del:/.test(data)) {
+          const jobId = data.slice(4);
+          context.waitUntil(answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Deleted job " + jobId));
+        } else if (data === "hist:me") {
+          context.waitUntil(answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Use /history or tap View History."));
+        } else if (data === "forget:confirm") {
+          context.waitUntil(answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Tap Confirm delete to erase all your data."));
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId as number, "Delete all your data?", forgetConfirmKeyboard());
+        } else if (data === "forget:yes") {
+          if (env.DB) {
+            await forgetUserHistory(env.DB, String(userId));
+            await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Your data has been deleted.");
+            await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId as number, "Your saved audit history and reports have been deleted.", mainMenuKeyboard());
+          } else {
+            await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Data deletion is temporarily unavailable.", true);
+          }
+        } else if (data === "forget:no") {
+          await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Deletion cancelled.");
+        } else if (data === "priv:info") {
+          await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Use /privacy for full details.");
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId as number, routeCommand({ name: "privacy", args: "" }), mainMenuKeyboard());
+        } else if (data === "aud:quick") {
+          await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Tap Start Audit for a static SEO audit.");
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId as number, "Tap Start Audit below for a static SEO audit (~0.5s).", mainMenuKeyboard());
+        } else if (data === "jobs:refresh") {
+          context.waitUntil(handleJobsCallback(env, userId as number, queryId, chatId as number));
+        } else if (data === "jobs:menu") {
+          context.waitUntil(handleJobsMenuCallback(env, queryId, chatId as number));
+        } else {
+          await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "This button is no longer available.");
+        }
+      }
     } else if (queryId && env.TELEGRAM_BOT_TOKEN) {
       context.waitUntil(answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "This action is not available."));
     }
@@ -472,8 +817,7 @@ async function handleWebhook(
     !Number.isSafeInteger(chatId) ||
     !isAllowedUser(userId, env.ALLOWED_TELEGRAM_USER_IDS) ||
     message?.chat?.type !== "private" ||
-    message?.from?.is_bot === true ||
-    typeof message.text !== "string"
+    message?.from?.is_bot === true
   ) {
     return jsonResponse({ ok: true });
   }
