@@ -20,6 +20,16 @@ interface FakeAuditRow {
   expires_at: string;
 }
 
+interface FakeSnapshotRow {
+  snapshot_id: string;
+  telegram_user_id: string;
+  url: string;
+  type: string;
+  overall_score: number | null;
+  normalized_result: string;
+  created_at: string;
+}
+
 interface FakeUserRow {
   telegram_user_id: string;
   created_at: string;
@@ -29,6 +39,7 @@ interface FakeUserRow {
 export class FakeD1 implements D1DatabaseLike {
   readonly rows = new Map<string, JobRow>();
   readonly audits = new Map<string, FakeAuditRow>();
+  readonly snapshots = new Map<string, FakeSnapshotRow>();
   readonly users = new Map<string, FakeUserRow>();
   failNextRead = false;
   failNextWrite = false;
@@ -64,6 +75,15 @@ export class FakeD1 implements D1DatabaseLike {
     if (normalized.includes("from audits where audit_id = ?")) {
       const row = this.audits.get(String(values[0]));
       return row ? { normalized_result: row.normalized_result, raw_result: row.raw_result } : null;
+    }
+
+    if (normalized.includes("from audit_snapshots where telegram_user_id = ?")) {
+      const [userId, url] = values.map(String);
+      const rows = [...this.snapshots.values()].filter(
+        (s) => s.telegram_user_id === userId && s.url === url,
+      ).sort((left, right) => right.created_at.localeCompare(left.created_at));
+      if (rows.length === 0) return null;
+      return { normalized_result: rows[0].normalized_result };
     }
 
     if (normalized.includes("where source_update_id = ?")) {
@@ -170,6 +190,21 @@ export class FakeD1 implements D1DatabaseLike {
         error: null,
         result_summary_message_id: null,
         source_update_id: sourceUpdateId === null ? null : String(sourceUpdateId),
+      });
+      return result(1);
+    }
+
+    if (normalized.startsWith("insert into audit_snapshots")) {
+      const [snapshotId, userId, url, type, overallScore, normalizedResult,
+        createdAt] = values;
+      this.snapshots.set(String(snapshotId), {
+        snapshot_id: String(snapshotId),
+        telegram_user_id: String(userId),
+        url: String(url),
+        type: String(type),
+        overall_score: typeof overallScore === "number" ? overallScore : null,
+        normalized_result: String(normalizedResult),
+        created_at: String(createdAt),
       });
       return result(1);
     }

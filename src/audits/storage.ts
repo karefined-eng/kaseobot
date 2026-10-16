@@ -34,7 +34,39 @@ export async function saveAuditResult(db: D1DatabaseLike, audit: KaseobotAuditRe
     )
     .run();
   assertDatabaseSuccess(result);
+
+  // Persist a snapshot keyed by URL + user so later audits of the same site
+  // can be compared against the previous run (regression / "did my fix work").
+  await db.prepare(`INSERT INTO audit_snapshots (
+      snapshot_id, telegram_user_id, url, type, overall_score,
+      normalized_result, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(
+      crypto.randomUUID(),
+      audit.requestedBy,
+      audit.url,
+      audit.type,
+      audit.overallScore,
+      JSON.stringify({ ...audit, raw: undefined }),
+      audit.completedAt ?? new Date().toISOString(),
+    )
+    .run();
   return (result.meta?.changes ?? 0) > 0;
+}
+
+export async function getPreviousAuditSnapshot(db: D1DatabaseLike, url: string, telegramUserId: string): Promise<KaseobotAuditResult | null> {
+  const row = await db.prepare(`SELECT normalized_result
+      FROM audit_snapshots
+      WHERE telegram_user_id = ? AND url = ?
+      ORDER BY created_at DESC
+      LIMIT 1`)
+    .bind(telegramUserId, url)
+    .first<{ normalized_result: string }>();
+  if (!row) return null;
+
+  const normalized: unknown = JSON.parse(row.normalized_result);
+  if (!isRecord(normalized)) return null;
+  return normalized as unknown as KaseobotAuditResult;
 }
 
 export async function getAuditResult(db: D1DatabaseLike, auditId: string): Promise<KaseobotAuditResult | null> {
