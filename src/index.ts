@@ -13,6 +13,13 @@ import { consumeAuditQueue, type MessageBatchLike } from "./queue-consumer";
 import { clampGeoPageLimit } from "./audits/geo-links";
 import { cleanupExpiredHistory, forgetUserHistory, getUserHistory } from "./history";
 import {
+  addWatchedUrl,
+  listWatchedUrls,
+  removeWatchedUrl,
+  runWatcher,
+  type WatchedUrl,
+} from "./watch";
+import {
   answerCallbackQuery,
   chunkedResultsKeyboard,
   dataPrivacyKeyboard,
@@ -84,6 +91,8 @@ const BOT_COMMANDS = [
   { command: "deepaudit", description: "Full SEOmator deep audit (paid plan)" },
   { command: "jobs", description: "Show in-progress audits" },
   { command: "status", description: "Check an audit job" },
+  { command: "watch", description: "Watch a site and get alerted when results change" },
+  { command: "unwatch", description: "Stop watching a site" },
   { command: "cancel", description: "Cancel a queued job" },
   { command: "history", description: "List recent audits" },
   { command: "forget", description: "Delete all saved data" },
@@ -105,7 +114,7 @@ export function parseTelegramCommand(text: string): ParsedCommand | null {
 export function routeCommand(command: ParsedCommand): string {
   switch (command.name) {
     case "start":
-      return "Welcome to Kaseobot. Tap a button below, or send /help.";
+      return "Welcome to kaseomator. Tap a button below, or send /help.";;
     case "help":
       return [
         "Kaseobot commands:",
@@ -116,6 +125,8 @@ export function routeCommand(command: ParsedCommand): string {
         "/deepaudit <url> [--type=seo-full|geo|quick|custom] [--categories=...] [--crawl] [--max-pages=N] [--mobile] — run full SEOmator engine via Container (requires Workers Paid plan)",
         "/jobs — show in-progress audits",
         "/status <job_id> — check an audit job",
+"/watch <url> — watch a site and get alerted when audit results change",
+"/unwatch <url> — stop watching a site",
         "/cancel <job_id> — cancel a queued job",
         "/history — list your recent audits",
         "/forget — delete your saved audit history",
@@ -317,16 +328,17 @@ async function handleAuthorizedMessage(
   updateId: number | null,
 ): Promise<void> {
   if (!env.TELEGRAM_BOT_TOKEN) return;
+  const db: D1DatabaseLike = env.DB!;
 
   const rawText = typeof message.text === "string" ? message.text.trim() : "";
   const command = rawText ? parseTelegramCommand(rawText) : null;
 
   // --- URL state machine: plain text while awaiting a URL ---
   if (command === null && rawText.length > 0) {
-    const state = await getUserState(env.DB, String(userId));
+    const state = await getUserState(db, String(userId));
     const pending = parsePendingUrl(state);
     if (pending) {
-      await setUserState(env.DB, String(userId), null);
+      await setUserState(db, String(userId), null);
       const validated = validateAndNormalizeUrl(rawText);
       if (!validated.ok) {
         await sendWithMenu(env, chatId, validated.error, mainMenuKeyboard());
@@ -360,7 +372,7 @@ async function handleAuthorizedMessage(
         return;
       }
       if (mapped === "/jobs") {
-        const { text, replyMarkup } = await buildJobsView(env.DB, userId);
+        const { text, replyMarkup } = await buildJobsView(db, userId);
         await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, text, replyMarkup);
         return;
       }
@@ -383,14 +395,14 @@ async function handleAuthorizedMessage(
       reply = text;
       replyMarkup = markup;
     } else if (command.name === "jobs") {
-      const { text, replyMarkup: markup } = await buildJobsView(env.DB, userId);
+      const { text, replyMarkup: markup } = await buildJobsView(db, userId);
       reply = text;
       replyMarkup = markup;
     } else if (command.name === "audit") {
       const validated = validateAndNormalizeUrl(command.args);
       if (!validated.ok) {
         reply = validated.error + "\n\nSend me the URL to audit, or tap Start Audit again.";
-        await setUserState(env.DB, String(userId), "awaiting_url:audit");
+        await setUserState(db, String(userId), "awaiting_url:audit");
         replyMarkup = mainMenuKeyboard();
       } else {
         const result = await createAuditJob(env, {
@@ -407,7 +419,7 @@ async function handleAuthorizedMessage(
       const validated = validateAndNormalizeUrl(command.args);
       if (!validated.ok) {
         reply = validated.error + "\n\nSend me the URL to crawl, or tap GEO Crawl again.";
-        await setUserState(env.DB, String(userId), "awaiting_url:geo");
+        await setUserState(db, String(userId), "awaiting_url:geo");
         replyMarkup = mainMenuKeyboard();
       } else {
         const result = await createAuditJob(env, {
@@ -448,7 +460,7 @@ async function handleAuthorizedMessage(
           else if (arg.startsWith("--user-agent=")) options.userAgent = arg.slice(13);
         }
         const jobId = crypto.randomUUID();
-        await env.DB.prepare(`INSERT INTO user_state (telegram_user_id, state, updated_at) VALUES (?, ?, ?)
+        await db.prepare(`INSERT INTO user_state (telegram_user_id, state, updated_at) VALUES (?, ?, ?)
           ON CONFLICT(telegram_user_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`)
           .bind(String(userId), `awaiting_deep_confirm:${jobId}:${JSON.stringify(options)}`, new Date().toISOString())
           .run();
@@ -456,16 +468,33 @@ async function handleAuthorizedMessage(
         replyMarkup = deepAuditConfirmKeyboard(jobId);
       }
     } else if (command.name === "status") {
-      reply = await getJobStatusMessage(env.DB, command.args || undefined, userId);
+      reply = await getJobStatusMessage(db, command.args || undefined, userId);
       replyMarkup = mainMenuKeyboard();
     } else if (command.name === "cancel") {
-      reply = await cancelAuditJob(env.DB, command.args || undefined, userId);
+      reply = await cancelAuditJob(db, command.args || undefined, userId);
+      replyMarkup = mainMenuKeyboard();
+    } else if (command.name === "watch") {
+      const validated = validateAndNormalizeUrl(command.args);
+      if (!validated.ok) {
+        reply = validated.error;
+      } else {
+        const { created, watchId } = await addWatchedUrl(db, String(userId), validated.url);
+        reply = created
+          ? `Watching ${validated.url}. Watch ID: ${watchId}\n\nI'll check it on a schedule and alert you if anything changes.`
+          : `You are already watching ${validated.url}. Watch ID: ${watchId}\n\nUse /unwatch <url> to stop watching it.`;
+      }
+      replyMarkup = mainMenuKeyboard();
+    } else if (command.name === "unwatch") {
+      const { removed } = await removeWatchedUrl(db, String(userId), command.args.trim());
+      reply = removed
+        ? `Stopped watching ${command.args.trim()}.`
+        : `I wasn't watching ${command.args.trim()}. Use /watch <url> to start.`;
       replyMarkup = mainMenuKeyboard();
     } else if (command.name === "history") {
-      reply = formatHistory(await getUserHistory(env.DB, String(userId)));
+      reply = formatHistory(await getUserHistory(db, String(userId)));
       replyMarkup = mainMenuKeyboard();
     } else if (command.name === "forget") {
-      await forgetUserHistory(env.DB, String(userId));
+      await forgetUserHistory(db, String(userId));
       reply = "Your saved audit history and reports have been deleted. This cannot remove copies already delivered in Telegram or information already sent to NVIDIA.";
       replyMarkup = mainMenuKeyboard();
     } else if (command.name === "seomator") {
@@ -832,7 +861,7 @@ const worker = {
 
     if (pathname === HEALTH_PATH) {
       if (request.method !== "GET") return jsonResponse({ ok: false }, 405);
-      return jsonResponse({ ok: true, service: "kaseobot" });
+      return jsonResponse({ ok: true, service: "kaseomator" });
     }
 
     if (pathname === WEBHOOK_PATH) {
@@ -848,6 +877,9 @@ const worker = {
   scheduled(controller: { scheduledTime: number }, env: Env, context: ExecutionContextLike): void {
     if (!env.DB) return;
     context.waitUntil(cleanupExpiredHistory(env.DB, controller.scheduledTime));
+    context.waitUntil(
+      runWatcher(env.DB, env).catch(() => undefined),
+    );
   },
 };
 
