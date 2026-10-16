@@ -187,6 +187,46 @@ function jobAcknowledgment(
   return label + " job accepted.\nWebsite: " + url + "\nJob ID: " + jobId + "\nStatus: " + status + crawlNote + "\nUse /status " + jobId + " to check progress.";
 }
 
+async function handleBulkAudit(
+  env: Env,
+  rawArgs: string,
+  userId: number,
+  chatId: number,
+  updateId: number | null,
+): Promise<string> {
+  if (!env.DB || !env.AUDIT_QUEUE) throw new Error("Audit storage or queue is not configured.");
+
+  const tokens = rawArgs.split(/\s+/).filter((token) => token.length > 0);
+  if (tokens.length < 1 || tokens.length > 5) {
+    return "Send 1 to 5 URLs, separated by spaces, for example: /bulk https://example.com https://example.org.";
+  }
+
+  const validatedUrls: string[] = [];
+  for (const token of tokens) {
+    const validated = validateAndNormalizeUrl(token);
+    if (!validated.ok) return validated.error;
+    validatedUrls.push(validated.url);
+  }
+
+  const createdIds: string[] = [];
+  for (const url of validatedUrls) {
+    const result = await createAuditJob(env, {
+      telegramUserId: userId,
+      chatId,
+      url,
+      // Bulk audits are not update_id deduplicated: each URL must become its own job.
+      updateId: null,
+    });
+    if (result.job.status === "failed") {
+      return result.job.error ?? "An audit job could not be created.";
+    }
+    createdIds.push(result.job.job_id);
+  }
+
+  const list = createdIds.map((id, index) => `${index + 1}. ${validatedUrls[index]} — job ${id.slice(0, 8)}`).join("\n");
+  return "Bulk audit accepted.\n" + list + "\n\nEach URL is audited separately. Check /status <job_id> for progress.";
+}
+
 async function handleAuthorizedMessage(
   env: Env,
   message: TelegramMessage,
@@ -287,6 +327,8 @@ async function handleAuthorizedMessage(
             : "Deep audit error: " + message;
         }
       }
+    } else if (command.name === "bulk") {
+      reply = await handleBulkAudit(env, command.args, userId, chatId, updateId);
     } else if (command.name === "status") {
       reply = await getJobStatusMessage(env.DB, command.args || undefined, userId);
     } else if (command.name === "cancel") {
