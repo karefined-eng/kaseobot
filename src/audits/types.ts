@@ -84,6 +84,26 @@ export interface KaseobotAuditResult {
     /** Complete source Markdown, retained for long-report document delivery. */
     reportMarkdown?: string;
   };
+  /** Diff against the previous audit of the same URL + user ("did my fix work?"). */
+  diff?: {
+    categories: Array<{
+      categoryId: string;
+      categoryName: string;
+      previousScore: number | null;
+      currentScore: number | null;
+      scoreChange: number | null;
+    }>;
+    findings: Array<{
+      categoryId: string;
+      categoryName: string;
+      findingId: string;
+      findingTitle: string;
+      previousStatus: AuditFindingStatus | null;
+      currentStatus: AuditFindingStatus;
+      pageUrl: string;
+    }>;
+    hasChanges: boolean;
+  };
 }
 
 export class AuditEngineError extends Error {

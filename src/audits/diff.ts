@@ -1,66 +1,126 @@
-import type { AuditCategory, AuditFinding, KaseobotAuditResult } from "./types";
+import type {
+  AuditCategory,
+  AuditFinding,
+  AuditFindingStatus,
+  KaseobotAuditResult,
+} from "./types";
 
-export interface DiffChange {
-  category: string;
+export interface CategoryDelta {
   categoryId: string;
-  finding: string;
-  from: string | null;
-  to: string | null;
-  statusChanged: boolean;
+  categoryName: string;
+  previousScore: number | null;
+  currentScore: number | null;
+  scoreChange: number | null;
 }
 
-export function diffAudits(previous: KaseobotAuditResult | null, current: KaseobotAuditResult): DiffChange[] {
-  if (!previous) return [];
+export interface FindingDelta {
+  categoryId: string;
+  categoryName: string;
+  findingId: string;
+  findingTitle: string;
+  previousStatus: AuditFindingStatus | null;
+  currentStatus: AuditFindingStatus;
+  pageUrl: string;
+}
 
-  const byId = new Map<string, AuditFinding>();
-  for (const category of previous.categories) {
-    for (const finding of category.findings) {
-      byId.set(`${category.id}::${finding.id}`, finding);
+export interface AuditDiff {
+  categories: CategoryDelta[];
+  findings: FindingDelta[];
+  hasChanges: boolean;
+}
+
+function findCategory(
+  categories: AuditCategory[],
+  id: string,
+): AuditCategory | undefined {
+  return categories.find((category) => category.id === id);
+}
+
+function findFinding(
+  findings: AuditFinding[],
+  id: string,
+): AuditFinding | undefined {
+  return findings.find((finding) => finding.id === id);
+}
+
+export function compareAuditToPrevious(
+  current: KaseobotAuditResult,
+  previous: KaseobotAuditResult | null,
+): AuditDiff {
+  const categories: CategoryDelta[] = [];
+  const findings: FindingDelta[] = [];
+
+  for (const currentCategory of current.categories) {
+    const previousCategory = previous
+      ? findCategory(previous.categories, currentCategory.id)
+      : undefined;
+    const previousScore = previousCategory?.score ?? null;
+    const currentScore = currentCategory.score ?? null;
+    let scoreChange: number | null = null;
+    if (previousScore !== null && currentScore !== null) {
+      scoreChange = currentScore - previousScore;
     }
-  }
+    categories.push({
+      categoryId: currentCategory.id,
+      categoryName: currentCategory.name,
+      previousScore,
+      currentScore,
+      scoreChange,
+    });
 
-  const changes: DiffChange[] = [];
-  for (const category of current.categories) {
-    for (const finding of category.findings) {
-      const key = `${category.id}::${finding.id}`;
-      const before = byId.get(key);
-      if (!before) continue; // new finding (not part of same-site regression on static checks)
-
-      if (before.status !== finding.status) {
-        changes.push({
-          category: category.name,
-          categoryId: category.id,
-          finding: finding.title,
-          from: before.status,
-          to: finding.status,
-          statusChanged: true,
-        });
-      } else if (before.evidence !== finding.evidence) {
-        changes.push({
-          category: category.name,
-          categoryId: category.id,
-          finding: finding.title,
-          from: before.evidence.slice(0, 120),
-          to: finding.evidence.slice(0, 120),
-          statusChanged: false,
+    for (const currentFinding of currentCategory.findings) {
+      const previousFinding = previousCategory
+        ? findFinding(previousCategory.findings, currentFinding.id)
+        : undefined;
+      const previousStatus = previousFinding?.status ?? null;
+      if (previousStatus !== currentFinding.status) {
+        findings.push({
+          categoryId: currentCategory.id,
+          categoryName: currentCategory.name,
+          findingId: currentFinding.id,
+          findingTitle: currentFinding.title,
+          previousStatus,
+          currentStatus: currentFinding.status,
+          pageUrl: currentFinding.pageUrl,
         });
       }
     }
   }
 
-  // Sort: status flips first, then evidence changes
-  changes.sort((a, b) => Number(b.statusChanged) - Number(a.statusChanged) || a.finding.localeCompare(b.finding));
-  return changes.slice(0, 8);
+  return {
+    categories,
+    findings,
+    hasChanges:
+      categories.some((delta) => delta.scoreChange !== null) ||
+      findings.length > 0,
+  };
 }
 
-export function formatDiff(changes: DiffChange[]): string {
-  if (changes.length === 0) return "No changed checks since your last audit of this site.";
-  const lines = ["Checks that changed since your last audit of this site:"];
-  for (const change of changes) {
-    const arrow = change.statusChanged
-      ? `${change.from ?? "skipped"} → ${change.to ?? "skipped"}`
-      : `evidence updated`;
-    lines.push(`- ${change.category} · ${change.finding}: ${arrow}`);
+export function formatDiffSummary(diff: AuditDiff): string {
+  const lines: string[] = ["Changes since last audit:"];
+
+  for (const delta of diff.categories) {
+    if (delta.scoreChange === null) continue;
+    const direction =
+      delta.scoreChange > 0 ? "improved" : delta.scoreChange < 0 ? "dropped" : "unchanged";
+    lines.push(
+      `- ${delta.categoryName} score: ${delta.previousScore ?? "not measured"} → ${delta.currentScore ?? "not measured"} (${direction}, ${Math.abs(delta.scoreChange)} points)`,
+    );
   }
+
+  for (const finding of diff.findings.slice(0, 5)) {
+    const previous =
+      finding.previousStatus === null
+        ? "not measured"
+        : finding.previousStatus;
+    lines.push(
+      `- ${finding.findingTitle} (${finding.categoryName}): ${previous} → ${finding.currentStatus}`,
+    );
+  }
+
+  if (!diff.hasChanges) {
+    lines.push("No measured change since your last audit of this site.");
+  }
+
   return lines.join("\n");
 }

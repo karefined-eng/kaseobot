@@ -4,7 +4,13 @@ import { createAuditEngine } from "./audits/engine";
 import { CachedStaticHtmlFetcher, runGeoAudit } from "./audits/geo";
 import { clampGeoPageLimit } from "./audits/geo-links";
 import { normalizeAuditResult } from "./audits/normalizer";
-import { getAuditResult, saveAuditResult } from "./audits/storage";
+import {
+  getAuditResult,
+  getPreviousAuditSnapshot,
+  saveAuditResult,
+} from "./audits/storage";
+import { compareAuditToPrevious, formatDiffSummary } from "./audits/diff";
+
 import { AuditEngineError, type AuditEngine, type KaseobotAuditResult } from "./audits/types";
 import { toTelegramMarkdownV2 } from "./ai/markdown";
 
@@ -141,6 +147,13 @@ async function runJob(
     } catch {
       throw new AuditEngineError("The audit engine returned an unsupported result.", false);
     }
+        // Diff against the previous audit of the same URL + user
+    // ("did my fix work?" regression view). Persisted with the result so
+    // queue redelivery reuses it without recomputing.
+    const previous = await getPreviousAuditSnapshot(db, job.url, job.telegram_user_id);
+    if (previous) {
+      audit.diff = compareAuditToPrevious(audit, previous);
+    }
     if (!await saveAuditResult(db, audit)) return; // /forget may have deleted the running job.
   }
 
@@ -167,6 +180,15 @@ async function runJob(
 
   // Older saved rows have only MarkdownV2; reuse it rather than calling Kimi again.
   reportMarkdown ??= reportMarkdownV2;
+
+  // Append the regression diff to the delivered report so the owner sees
+  // what flipped since the last audit of this site.
+  if (audit.diff && audit.diff.hasChanges) {
+    const diffText = formatDiffSummary(audit.diff);
+    reportMarkdown = reportMarkdown + "\n\n## Changes since last audit\n\n" + diffText;
+    reportMarkdownV2 = reportMarkdownV2 + "\n\n" + toTelegramMarkdownV2(diffText);
+  }
+
   const beforeDelivery = await getJobById(db, job.job_id);
   if (!beforeDelivery || beforeDelivery.status !== "running") return;
   const messageId = await sendAuditReport(env.TELEGRAM_BOT_TOKEN, Number(job.chat_id), audit, reportMarkdown, reportMarkdownV2);
