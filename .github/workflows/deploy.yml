@@ -16,7 +16,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Build & push Container
+        # Cloudflare Containers requires the Workers Paid plan.
+        # On the free plan this step fails with "Unauthorized: ... Workers Paid plan";
+        # continue-on-error keeps the Worker deploy below working regardless.
+        continue-on-error: true
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -30,4 +37,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: latest
-          command: deploy
+          # --containers-rollout=none deploys the Worker and its Durable Object
+          # binding without requiring the Containers entitlement.
+          # Remove this flag after upgrading to Workers Paid to roll out the container.
+          command: deploy --containers-rollout=none

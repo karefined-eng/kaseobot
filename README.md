@@ -18,7 +18,7 @@
 |---------|-------------|
 | `/audit <url>` | Static HTML SEO audit (12 checks, ~0.5s) |
 | `/geo <url>` | Multi-page GEO crawl (up to 5 same-origin pages) |
-| `/deepaudit <url>` | **Full SEOmator engine** via Cloudflare Container — 365+ rules, JS rendering, CWV, screenshots |
+| `/deepaudit <url>` | **Full SEOmator engine** via Cloudflare Container — 365+ rules, JS rendering, CWV, screenshots ⚠️ *requires Workers Paid plan* |
 | `/seomator <url>` | Links to SEOmator's hosted tools (no auto-submit) |
 | `/status <id>` | Job progress & elapsed time |
 | `/cancel <id>` | Cancel queued/running job |
@@ -46,6 +46,14 @@ Telegram → Cloudflare Worker (edge)
 
 ---
 
+## ⚠️ Plan requirements
+
+| Feature | Plan needed |
+|---|---|
+| `/audit`, `/geo`, `/status`, `/cancel`, `/history`, `/forget`, `/seomator`, `/privacy`, GEO crawls, Kimi AI analysis | **Workers Free** ✅ |
+| `/deepaudit` (SEOmator engine in Cloudflare Containers) | **Workers Paid** ($5/mo) — Cloudflare Containers has no free tier |
+
+The repo deploys cleanly on the free plan: `wrangler deploy --containers-rollout=none` ships the Worker and its Durable Object binding while skipping the container. `main` stays green either way. Remove that flag after upgrading to roll the container out.
 ## 🚀 Quick Deploy
 
 ### Prerequisites
