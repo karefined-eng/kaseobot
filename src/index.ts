@@ -83,7 +83,7 @@ export function routeCommand(command: ParsedCommand): string {
         "/help — show this help",
         "/audit <url> — enqueue a one-page SEO audit",
         "/geo <url> — enqueue a GEO crawl of up to five same-origin pages",
-        "/deepaudit <url> [--type=seo-full|geo|quick|custom] [--categories=...] [--crawl] [--max-pages=N] [--mobile] — run full SEOmator engine via Container",
+        "/deepaudit <url> [--type=seo-full|geo|quick|custom] [--categories=...] [--crawl] [--max-pages=N] [--mobile] — run full SEOmator engine via Container (requires Workers Paid plan)",
         "/status <job_id> — check an audit job",
         "/cancel <job_id> — cancel a queued job",
         "/history — list your recent audits",
@@ -272,14 +272,19 @@ async function handleAuthorizedMessage(
           clearTimeout(timeoutId);
           if (!response.ok) {
             const err = await response.text();
-            reply = "Deep audit failed (" + response.status + "): " + err.slice(0, 200);
+            reply = /workers paid|unauthorized|entitlement/i.test(err)
+              ? "Deep audit needs the Cloudflare Workers Paid plan ($5/mo) - Cloudflare Containers has no free tier. /audit and /geo work on the free plan."
+              : "Deep audit failed (" + response.status + "): " + err.slice(0, 200);
           } else {
             const markdown = await response.text();
             reply = markdown;
           }
         } catch (err: unknown) {
           clearTimeout(timeoutId);
-          reply = "Deep audit error: " + (err instanceof Error ? err.message : String(err));
+          const message = err instanceof Error ? err.message : String(err);
+          reply = /workers paid|unauthorized|entitlement/i.test(message)
+            ? "Deep audit needs the Cloudflare Workers Paid plan ($5/mo) - Cloudflare Containers has no free tier. /audit and /geo work on the free plan."
+            : "Deep audit error: " + message;
         }
       }
     } else if (command.name === "status") {
