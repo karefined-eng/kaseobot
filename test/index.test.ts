@@ -115,7 +115,9 @@ describe("Telegram user access control", () => {
     vi.stubGlobal("fetch", telegramFetch);
     const context = createContext();
 
-    const response = await worker.fetch(webhookRequest(update()), env, context);
+    const db = new FakeD1();
+    const queue = new FakeQueue();
+    const response = await worker.fetch(webhookRequest(update()), runtimeEnv(db, queue), context);
 
     expect(response.status).toBe(200);
     expect(context.pending).toHaveLength(1);
@@ -812,6 +814,158 @@ describe("webhook audit command", () => {
     const [, cancelInit] = telegramFetch.mock.calls[1] as [string, RequestInit];
     expect(JSON.parse(String(cancelInit.body)).text).toBe("Job canceled.");
     expect(db.rows.get(result.job.job_id)?.status).toBe("canceled");
+  });
+});
+
+describe("/jobs view and URL state machine", () => {
+  it("reports no in-progress audits with no jobs", async () => {
+    const db = new FakeD1();
+    const queue = new FakeQueue();
+    const telegramFetch = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.stubGlobal("fetch", telegramFetch);
+    const context = createContext();
+
+    const response = await worker.fetch(
+      webhookRequest(update(42, "/jobs", "private", 800)),
+      runtimeEnv(db, queue),
+      context,
+    );
+    expect(response.status).toBe(200);
+    await Promise.all(context.pending);
+    const [, init] = telegramFetch.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).text).toContain("No audits are running or queued right now");
+  });
+
+  it("lists queued and running jobs with elapsed time", async () => {
+    const db = new FakeD1();
+    const queue = new FakeQueue();
+    const created = await createAuditJob(runtimeEnv(db, queue), {
+      telegramUserId: 42, chatId: 42, url: "https://example.com/", updateId: 801,
+    });
+    const telegramFetch = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.stubGlobal("fetch", telegramFetch);
+    const context = createContext();
+
+    const response = await worker.fetch(
+      webhookRequest(update(42, "/jobs", "private", 802)),
+      runtimeEnv(db, queue),
+      context,
+    );
+    expect(response.status).toBe(200);
+    await Promise.all(context.pending);
+    const [, init] = telegramFetch.mock.calls[0] as [string, RequestInit];
+    const text = JSON.parse(String(init.body)).text;
+    expect(text).toContain("SEO · queued");
+    expect(text).toContain(created.job.job_id.slice(0, 8));
+    expect(db.rows.get(created.job.job_id)?.status).toBe("queued");
+  });
+
+  it("jobs:refresh callback updates the jobs view", async () => {
+    const db = new FakeD1();
+    const queue = new FakeQueue();
+    await createAuditJob(runtimeEnv(db, queue), {
+      telegramUserId: 42, chatId: 42, url: "https://example.com/", updateId: 803,
+    });
+    const telegramFetch = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.stubGlobal("fetch", telegramFetch);
+    const context = createContext();
+
+    // Simulate a callback_query with jobs:refresh
+    const response = await worker.fetch(
+      new Request("https://kaseobot.test/telegram/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json", "X-Telegram-Bot-Api-Secret-Token": TEST_SECRET },
+        body: JSON.stringify({
+          update_id: 804,
+          callback_query: { id: "cb-1", from: { id: 42, is_bot: false }, message: { chat: { id: 42, type: "private" } }, data: "jobs:refresh" },
+        }),
+      }),
+      runtimeEnv(db, queue),
+      context,
+    );
+    expect(response.status).toBe(200);
+    await Promise.all(context.pending);
+    expect(telegramFetch).toHaveBeenCalled();
+  });
+
+  it("jobs:menu callback returns to main menu", async () => {
+    const db = new FakeD1();
+    const queue = new FakeQueue();
+    const telegramFetch = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.stubGlobal("fetch", telegramFetch);
+    const context = createContext();
+
+    const response = await worker.fetch(
+      new Request("https://kaseobot.test/telegram/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json", "X-Telegram-Bot-Api-Secret-Token": TEST_SECRET },
+        body: JSON.stringify({
+          update_id: 805,
+          callback_query: { id: "cb-2", from: { id: 42, is_bot: false }, message: { chat: { id: 42, type: "private" } }, data: "jobs:menu" },
+        }),
+      }),
+      runtimeEnv(db, queue),
+      context,
+    );
+    expect(response.status).toBe(200);
+    await Promise.all(context.pending);
+    const [, init] = telegramFetch.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).text).toContain("Welcome to kaseomator");
+  });
+
+  it("URL state machine: /audit without URL prompts, then URL creates job", async () => {
+    const db = new FakeD1();
+    const queue = new FakeQueue();
+    const telegramFetch = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.stubGlobal("fetch", telegramFetch);
+    const context = createContext();
+
+    // Step 1: /audit with no URL -> awaiting state
+    const step1 = await worker.fetch(
+      webhookRequest(update(42, "/audit", "private", 806)),
+      runtimeEnv(db, queue),
+      context,
+    );
+    expect(step1.status).toBe(200);
+    await Promise.all(context.pending);
+    const [, init1] = telegramFetch.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init1.body)).text).toContain("Send me the URL to audit");
+
+    // Verify user_state was persisted
+    const userRow = [...db.users.values()][0];
+    expect(userRow).toBeDefined();
+    expect(db.userStates.get("42")?.state).toBe("awaiting_url:audit");
+
+    // Step 2: send the URL -> job created
+    const step2 = await worker.fetch(
+      webhookRequest(update(42, "https://example.com/", "private", 807)),
+      runtimeEnv(db, queue),
+      context,
+    );
+    expect(step2.status).toBe(200);
+    await Promise.all(context.pending);
+    expect(db.rows.size).toBe(1);
+    const job = [...db.rows.values()][0];
+    expect(job.url).toBe("https://example.com/");
+    expect(db.userStates.get("42")).toBeUndefined();
+  });
+
+  it("ensureUser populates the users table on first interaction", async () => {
+    const db = new FakeD1();
+    const queue = new FakeQueue();
+    const telegramFetch = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.stubGlobal("fetch", telegramFetch);
+    const context = createContext();
+
+    await worker.fetch(
+      webhookRequest(update(42, "/start", "private", 808)),
+      runtimeEnv(db, queue),
+      context,
+    );
+    await Promise.all(context.pending);
+    expect(db.users.has("42")).toBe(true);
+    const user = db.users.get("42");
+    expect(user?.history_enabled).toBe(1);
   });
 });
 

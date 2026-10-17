@@ -36,11 +36,17 @@ interface FakeUserRow {
   history_enabled: number;
 }
 
+interface FakeUserStateRow {
+  state: string;
+  updated_at: string;
+}
+
 export class FakeD1 implements D1DatabaseLike {
   readonly rows = new Map<string, JobRow>();
   readonly audits = new Map<string, FakeAuditRow>();
   readonly snapshots = new Map<string, FakeSnapshotRow>();
   readonly users = new Map<string, FakeUserRow>();
+  readonly userStates = new Map<string, { state: string; updated_at: string }>();
   failNextRead = false;
   failNextWrite = false;
 
@@ -86,6 +92,12 @@ export class FakeD1 implements D1DatabaseLike {
       return { normalized_result: rows[0].normalized_result };
     }
 
+    if (normalized.includes("select state from user_state where telegram_user_id = ?")) {
+      const [userId] = values.map(String);
+      const row = this.userStates.get(userId);
+      return row ? { state: row.state } : null;
+    }
+
     if (normalized.includes("where source_update_id = ?")) {
       const [updateId, userId] = values.map(String);
       const row = [...this.rows.values()].find(
@@ -114,6 +126,22 @@ export class FakeD1 implements D1DatabaseLike {
       throw new Error("transient test database error");
     }
     const normalized = normalize(query);
+    if (normalized.includes("from jobs where telegram_user_id = ? and status in") && normalized.includes("order by created_at desc")) {
+      const [userId] = values.map(String);
+      const statuses = values.slice(1, 4).map(String);
+      const rows = [...this.rows.values()]
+        .filter((job) => job.telegram_user_id === userId)
+        .filter((job) => statuses.includes(job.status))
+        .sort((left, right) => right.created_at.localeCompare(left.created_at))
+        .map((job) => ({
+          job_id: job.job_id,
+          url: job.url,
+          type: job.type,
+          status: job.status,
+          created_at: job.created_at,
+        }));
+      return { success: true, results: rows };
+    }
     if (!normalized.includes("from jobs j left join audits a on a.job_id = j.job_id")) {
       throw new Error(`Unsupported FakeD1 list query: ${normalized}`);
     }
@@ -160,6 +188,19 @@ export class FakeD1 implements D1DatabaseLike {
         });
       }
       return result(0);
+    }
+
+    if (normalized.startsWith("insert into user_state")) {
+      const [userId, state, updatedAt] = values;
+      this.userStates.set(String(userId), { state: String(state), updated_at: String(updatedAt) });
+      return result(1);
+    }
+
+    if (normalized.startsWith("delete from user_state where telegram_user_id = ?")) {
+      const userId = String(values[0]);
+      const existed = this.userStates.has(userId);
+      this.userStates.delete(userId);
+      return result(existed ? 1 : 0);
     }
 
     if (normalized.startsWith("insert or ignore into jobs")) {

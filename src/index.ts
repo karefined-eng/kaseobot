@@ -11,7 +11,7 @@ import {
 } from "./jobs";
 import { consumeAuditQueue, type MessageBatchLike } from "./queue-consumer";
 import { clampGeoPageLimit } from "./audits/geo-links";
-import { cleanupExpiredHistory, forgetUserHistory, getUserHistory } from "./history";
+import { cleanupExpiredHistory, ensureUser, forgetUserHistory, getUserHistory } from "./history";
 import {
   addWatchedUrl,
   listWatchedUrls,
@@ -45,6 +45,9 @@ import {
   type TelegramReplyKeyboard,
 } from "./telegram-ui";
 import { validateAndNormalizeUrl } from "./url-validation";
+import { createAuditEngine } from "./audits/engine";
+import { normalizeAuditResult } from "./audits/normalizer";
+import { buildKeywordSummary } from "./audits/keyword-signals";
 import type { SeomatorContainerNamespace } from "./seomator-container";
 
 export interface Env extends JobEnvironment {
@@ -91,6 +94,7 @@ const BOT_COMMANDS = [
   { command: "help", description: "Show available commands" },
   { command: "audit", description: "Enqueue a one-page SEO audit" },
   { command: "geo", description: "GEO crawl of up to five same-origin pages" },
+  { command: "keywords", description: "Extract keyword signals from a page" },
   { command: "deepaudit", description: "Full SEOmator deep audit (paid plan)" },
   { command: "jobs", description: "Show in-progress audits" },
   { command: "status", description: "Check an audit job" },
@@ -332,6 +336,8 @@ async function handleAuthorizedMessage(
 ): Promise<void> {
   if (!env.TELEGRAM_BOT_TOKEN) return;
   const db: D1DatabaseLike = env.DB!;
+  if (!db) return;
+  await ensureUser(db, String(userId));
 
   const rawText = typeof message.text === "string" ? message.text.trim() : "";
   const command = rawText ? parseTelegramCommand(rawText) : null;
@@ -441,6 +447,29 @@ async function handleAuthorizedMessage(
         );
         if (result.job.status === "failed") replyMarkup = retryKeyboard(result.job.job_id);
         else replyMarkup = jobAckKeyboard(result.job.job_id);
+      }
+    } else if (command.name === "keywords") {
+      const validated = validateAndNormalizeUrl(command.args);
+      if (!validated.ok) {
+        reply = validated.error;
+      } else {
+        const engineResult = await createAuditEngine().auditPage({
+          url: validated.url,
+          timeoutMs: 20000,
+          includeJavaScriptRendering: false,
+          includeCoreWebVitals: false,
+        });
+        const audit = normalizeAuditResult({
+          jobId: crypto.randomUUID(),
+          auditId: crypto.randomUUID(),
+          type: "seo_audit",
+          url: validated.url,
+          requestedBy: String(userId),
+          startedAt: new Date().toISOString(),
+          engineResult,
+        });
+        reply = buildKeywordSummary(audit);
+        replyMarkup = mainMenuKeyboard();
       }
     } else if (command.name === "deepaudit") {
       const validated = validateAndNormalizeUrl(command.args);

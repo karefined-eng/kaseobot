@@ -23,6 +23,20 @@ function changeCount(result: D1ResultLike | undefined): number {
   if (result.success === false) throw new Error(result.error ?? "D1 history operation failed.");
   return result.meta?.changes ?? 0;
 }
+export async function ensureUser(
+  db: D1DatabaseLike,
+  telegramUserId: string,
+): Promise<void> {
+  const result = await db.prepare(
+    `INSERT OR IGNORE INTO users (telegram_user_id, created_at, history_enabled)
+     VALUES (?, ?, 1)`,
+  )
+    .bind(telegramUserId, new Date().toISOString())
+    .run();
+  if (result.success === false) {
+    throw new Error(result.error ?? "Could not ensure user record.");
+  }
+}
 
 export async function getUserHistory(
   db: D1DatabaseLike,

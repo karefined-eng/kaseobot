@@ -21,7 +21,7 @@ export function mainMenuKeyboard(): TelegramReplyKeyboard {
     keyboard: [
       [{ text: "Start Audit" }, { text: "Check Status" }],
       [{ text: "GEO Crawl" }, { text: "View History" }],
-      [{ text: "Your Data" }, { text: "Privacy" }, { text: "Help" }],
+      [{ text: "Keywords" }, { text: "Your Data" }, { text: "Privacy" }, { text: "Help" }],
     ],
     resize_keyboard: true,
     one_time_keyboard: false,
@@ -46,6 +46,8 @@ export function menuLabelToCommand(label: string): string | null {
       return "/status";
     case "GEO Crawl":
       return "/geo";
+    case "Keywords":
+      return "/keywords";
     case "View History":
       return "/history";
     case "Your Data":
