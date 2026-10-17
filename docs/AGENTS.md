@@ -22,6 +22,7 @@
 | `test/` | Vitest unit/integration coverage; `test/fakes.ts` implements the narrow D1/queue test doubles |
 | `wrangler.toml` | Worker bindings, queues, D1 migration path, nonsecret variables, and daily Cron Trigger |
 | `docs/origin.md`, `docs/research/`, `docs/handoff/` | Product intent, cited workflow rationale, and permanent milestone walkthroughs |
+| `docs/research/telegram-bot-competitive-analysis.md` | Live GitHub star-leader analysis of Telegram bots/libraries (2026-10-17); patterns to adopt and anti-patterns to avoid for kaseomator positioning |
 
 ## Useful checks
 
