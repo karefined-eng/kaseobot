@@ -98,6 +98,11 @@ export class FakeD1 implements D1DatabaseLike {
       return row ? { state: row.state } : null;
     }
 
+    if (normalized.includes("select history_enabled from users where telegram_user_id = ?")) {
+      const row = this.users.get(String(values[0]));
+      return row ? { history_enabled: row.history_enabled } : null;
+    }
+
     if (normalized.includes("where source_update_id = ?")) {
       const [updateId, userId] = values.map(String);
       const row = [...this.rows.values()].find(
@@ -190,6 +195,21 @@ export class FakeD1 implements D1DatabaseLike {
       return result(0);
     }
 
+    if (normalized.startsWith("insert into users")) {
+      const [userId, createdAt, enabled] = values;
+      const existing = this.users.get(String(userId));
+      if (existing) {
+        existing.history_enabled = Number(enabled);
+        return result(1);
+      }
+      this.users.set(String(userId), {
+        telegram_user_id: String(userId),
+        created_at: String(createdAt),
+        history_enabled: Number(enabled),
+      });
+      return result(1);
+    }
+
     if (normalized.startsWith("insert into user_state")) {
       const [userId, state, updatedAt] = values;
       this.userStates.set(String(userId), { state: String(state), updated_at: String(updatedAt) });
@@ -270,11 +290,78 @@ export class FakeD1 implements D1DatabaseLike {
       return result(1);
     }
 
+    if (normalized.startsWith("delete from audits where job_id = ?")) {
+      const jobId = String(values[0]);
+      const before = this.audits.size;
+      for (const [auditId, row] of this.audits) if (row.job_id === jobId) this.audits.delete(auditId);
+      return result(before - this.audits.size);
+    }
+
+    if (normalized.startsWith("delete from audits where telegram_user_id in (select telegram_user_id from users where history_enabled = 0)")) {
+      const cutoff = String(values[0]);
+      const optedOut = new Set([...this.users.values()].filter((user) => user.history_enabled === 0).map((user) => user.telegram_user_id));
+      const before = this.audits.size;
+      for (const [auditId, row] of this.audits) {
+        if (optedOut.has(row.telegram_user_id) && row.created_at <= cutoff) this.audits.delete(auditId);
+      }
+      return result(before - this.audits.size);
+    }
+
     if (normalized.startsWith("delete from audits where telegram_user_id = ?")) {
       const userId = String(values[0]);
       const before = this.audits.size;
       for (const [auditId, row] of this.audits) if (row.telegram_user_id === userId) this.audits.delete(auditId);
       return result(before - this.audits.size);
+    }
+
+    if (normalized.startsWith("delete from audit_snapshots where telegram_user_id = ? and url = ?")) {
+      const [userId, url] = values.map(String);
+      const before = this.snapshots.size;
+      for (const [snapshotId, row] of this.snapshots) {
+        if (row.telegram_user_id === userId && row.url === url) this.snapshots.delete(snapshotId);
+      }
+      return result(before - this.snapshots.size);
+    }
+
+    if (normalized.startsWith("delete from audit_snapshots where telegram_user_id in (select telegram_user_id from users where history_enabled = 0)")) {
+      const cutoff = String(values[0]);
+      const optedOut = new Set([...this.users.values()].filter((user) => user.history_enabled === 0).map((user) => user.telegram_user_id));
+      const before = this.snapshots.size;
+      for (const [snapshotId, row] of this.snapshots) {
+        if (optedOut.has(row.telegram_user_id) && row.created_at <= cutoff) this.snapshots.delete(snapshotId);
+      }
+      return result(before - this.snapshots.size);
+    }
+
+    if (normalized.startsWith("delete from audit_snapshots where telegram_user_id = ?")) {
+      const userId = String(values[0]);
+      const before = this.snapshots.size;
+      for (const [snapshotId, row] of this.snapshots) if (row.telegram_user_id === userId) this.snapshots.delete(snapshotId);
+      return result(before - this.snapshots.size);
+    }
+
+    if (normalized.startsWith("delete from jobs where telegram_user_id = ? and status in")) {
+      const userId = String(values[0]);
+      const before = this.rows.size;
+      for (const [jobId, row] of this.rows) {
+        if (row.telegram_user_id === userId && ["completed", "failed", "canceled"].includes(row.status)) this.rows.delete(jobId);
+      }
+      return result(before - this.rows.size);
+    }
+
+    if (normalized.startsWith("delete from jobs where telegram_user_id in (select telegram_user_id from users where history_enabled = 0)")) {
+      const cutoff = String(values[0]);
+      const optedOut = new Set([...this.users.values()].filter((user) => user.history_enabled === 0).map((user) => user.telegram_user_id));
+      const before = this.rows.size;
+      for (const [jobId, row] of this.rows) {
+        const terminalAt = row.completed_at ?? row.created_at;
+        if (optedOut.has(row.telegram_user_id) && ["completed", "failed", "canceled"].includes(row.status) && terminalAt <= cutoff) this.rows.delete(jobId);
+      }
+      return result(before - this.rows.size);
+    }
+
+    if (normalized.startsWith("delete from jobs where job_id = ?")) {
+      return result(this.rows.delete(String(values[0])) ? 1 : 0);
     }
 
     if (normalized.startsWith("delete from jobs where telegram_user_id = ?")) {
@@ -314,7 +401,7 @@ export class FakeD1 implements D1DatabaseLike {
       for (const [userId, user] of this.users) {
         const hasJob = [...this.rows.values()].some((job) => job.telegram_user_id === userId);
         const hasAudit = [...this.audits.values()].some((audit) => audit.telegram_user_id === userId);
-        if (user.created_at <= cutoff && !hasJob && !hasAudit) this.users.delete(userId);
+        if (user.created_at <= cutoff && user.history_enabled === 1 && !hasJob && !hasAudit) this.users.delete(userId);
       }
       return result(before - this.users.size);
     }

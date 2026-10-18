@@ -24,7 +24,7 @@ kaseomator is positioned as SEO/GEO audit infrastructure you invoke from Telegra
 | `/seomator <url>` | Links to SEOmator's hosted tools (no auto-submit) |
 | `/status <id>` | Job progress and elapsed time |
 | `/cancel <id>` | Cancel a queued or running job |
-| `/history` | Your recent audits (30-day retention) |
+| `/history` | Your recent audits (30-day retention) with a history on/off toggle |
 | `/forget` | Delete all your saved data instantly |
 | `/privacy` | Data-handling transparency |
 
@@ -55,6 +55,8 @@ Telegram -> Cloudflare Worker (edge)
 | `/audit`, `/geo`, `/status`, `/cancel`, `/history`, `/forget`, `/seomator`, `/privacy`, GEO crawls, Kimi AI analysis | Workers Free |
 | `/deepaudit` (SEOmator engine in Cloudflare Containers) | Workers Paid ($5/mo) — Cloudflare Containers has no free tier |
 
+**Note:** All AI-powered features (Kimi analysis, `/keywords` summaries) require the NVIDIA API key to be configured. Without it, the bot returns deterministic static reports only.
+
 The repo deploys cleanly on the free plan: `wrangler deploy --containers-rollout=none` ships the Worker and its Durable Object binding while skipping the container. `main` stays green either way. Remove that flag after upgrading to roll the container out.
 
 ---
@@ -65,7 +67,7 @@ The repo deploys cleanly on the free plan: `wrangler deploy --containers-rollout
 
 - Cloudflare account
 - Telegram bot token (from @BotFather)
-- NVIDIA API key (optional, for Kimi AI analysis)
+- NVIDIA API key (required for AI-powered analysis)
 
 ### 1-Click Deploy
 
@@ -81,7 +83,7 @@ npm ci
 
 # 2. Configure secrets (never commit these)
 cp .dev.vars.example .dev.vars
-# Edit .dev.vars with your tokens
+# Edit .dev.vars with your NVIDIA API key and Telegram token
 
 # 3. Create Cloudflare resources
 npx wrangler d1 create kaseobot-data
@@ -154,6 +156,7 @@ git push origin main
 - Private chats only — no group or channel exposure
 - 30-day auto-expiry — audits auto-delete after 30 days
 - `/forget` — instant, complete data deletion
+- History opt-out — turn retention off from `/history`; reports are deleted right after delivery
 - No external submissions — `/seomator` only opens links, never auto-submits
 - AI analysis opt-in — NVIDIA Kimi used only when `NVIDIA_API_KEY` is configured
 - Encrypted secrets — Cloudflare Workers secrets, never in code

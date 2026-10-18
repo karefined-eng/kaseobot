@@ -11,7 +11,14 @@ import {
 } from "./jobs";
 import { consumeAuditQueue, type MessageBatchLike } from "./queue-consumer";
 import { clampGeoPageLimit } from "./audits/geo-links";
-import { cleanupExpiredHistory, ensureUser, forgetUserHistory, getUserHistory } from "./history";
+import {
+  cleanupExpiredHistory,
+  ensureUser,
+  forgetUserHistory,
+  getHistoryPreference,
+  getUserHistory,
+  setHistoryPreference,
+} from "./history";
 import {
   addWatchedUrl,
   listWatchedUrls,
@@ -28,6 +35,7 @@ import {
   deepAuditCostMessage,
   formatHistory,
   forgetConfirmKeyboard,
+  historyKeyboard,
   helpMessage,
   jobAckKeyboard,
   jobAcknowledgment,
@@ -135,7 +143,7 @@ export function routeCommand(command: ParsedCommand): string {
 "/watch <url> — watch a site and get alerted when audit results change",
 "/unwatch <url> — stop watching a site",
         "/cancel <job_id> — cancel a queued job",
-        "/history — list your recent audits",
+        "/history — list your recent audits (reply includes a history on/off toggle)",
         "/forget — delete your saved audit history",
         "/seomator <url> — open SEOmator's external SEO/GEO tools",
         "/privacy — show data-handling information",
@@ -149,6 +157,7 @@ export function routeCommand(command: ParsedCommand): string {
         "Kaseobot is private and available only to allowlisted Telegram users.",
         "Kaseobot stores your Telegram user ID, chat ID, submitted URL, job status, normalized findings, raw static-audit output, generated report Markdown, and report metadata in D1 so it can run and show your audits. GEO audits can inspect up to five same-origin static HTML pages.",
         "Audit results expire after 30 days and the daily cleanup removes them within 24 hours of expiry. Use /history to view recent audits or /forget to immediately delete your saved jobs and results. /forget cannot recall copies already delivered in Telegram or data already sent to NVIDIA for analysis.",
+        "Use the history toggle in the /history reply to turn retention off. While history is off, stored reports are erased immediately, each new report is deleted from storage as soon as it is delivered, failed jobs cannot be retried from stored data, and only your Telegram ID and this preference are kept. The preference survives /forget and the daily cleanup; turn history on again from /history to return to 30-day retention.",
         "When AI analysis is configured, only a filtered summary, GEO page counts/scores for GEO audits, and up to 25 failed or warning findings are sent to NVIDIA's hosted Kimi K3. Telegram IDs, raw webhook data, and raw audit-engine output are not sent to Kimi. If Kimi is unavailable, Kaseobot sends a deterministic report from the audit findings.",
         "SEOmator buttons open its external public tools. Kaseobot does not submit your URL or retrieve the external result automatically.",
       ].join("\n\n");
@@ -543,8 +552,11 @@ async function handleAuthorizedMessage(
         replyMarkup = mainMenuKeyboard();
       }
     } else if (command.name === "history") {
-      reply = formatHistory(await getUserHistory(db, String(userId)));
-      replyMarkup = mainMenuKeyboard();
+      const historyEnabled = await getHistoryPreference(db, String(userId));
+      reply = historyEnabled
+        ? formatHistory(await getUserHistory(db, String(userId)))
+        : "History is off. Reports are deleted from storage right after delivery, so nothing is listed here.\n\nTurn history on to keep reports for 30 days.";
+      replyMarkup = historyKeyboard(historyEnabled);
     } else if (command.name === "forget") {
       await forgetUserHistory(db, String(userId));
       reply = "Your saved audit history and reports have been deleted. This cannot remove copies already delivered in Telegram or information already sent to NVIDIA.";
@@ -794,6 +806,41 @@ async function handleJobsMenuCallback(env: Env, callbackQueryId: string, chatId:
   await sendTelegramMessage(botKey, chatId, welcomeMessage().text, welcomeMessage().replyMarkup);
 }
 
+async function handleHistoryToggleCallback(
+  env: Env,
+  enable: boolean,
+  userId: number,
+  callbackQueryId: string,
+  chatId: number,
+): Promise<void> {
+  const botKey = env.TELEGRAM_BOT_TOKEN;
+  if (!botKey || !env.DB) {
+    if (botKey) await answerCallbackQuery(botKey, callbackQueryId, "History settings are temporarily unavailable.", true);
+    return;
+  }
+  try {
+    const userIdStr = String(userId);
+    await setHistoryPreference(env.DB, userIdStr, enable);
+    if (!enable) {
+      // Turning history off takes effect immediately: stored reports, snapshot
+      // comparisons, and terminal jobs are deleted now. Active jobs are purged
+      // right after their report is delivered.
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM audits WHERE telegram_user_id = ?").bind(userIdStr),
+        env.DB.prepare("DELETE FROM audit_snapshots WHERE telegram_user_id = ?").bind(userIdStr),
+        env.DB.prepare("DELETE FROM jobs WHERE telegram_user_id = ? AND status IN ('completed', 'failed', 'canceled')").bind(userIdStr),
+      ]);
+    }
+    await answerCallbackQuery(botKey, callbackQueryId, enable ? "History on." : "History off.");
+    const text = enable
+      ? "History is on. Reports are kept for 30 days and listed in /history. Use /forget to delete everything at any time."
+      : "History is off. Stored reports were deleted, and each new report is removed from storage as soon as it is delivered. Failed audits cannot be retried from stored jobs while history is off.";
+    await sendTelegramMessage(botKey, chatId, text, historyKeyboard(enable));
+  } catch {
+    await answerCallbackQuery(botKey, callbackQueryId, "Could not update the history preference.", true);
+  }
+}
+
 async function handleRemoveWatchCallback(
   env: Env,
   callbackQueryId: string,
@@ -882,6 +929,8 @@ async function handleWebhook(
           context.waitUntil(answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Deleted job " + jobId));
         } else if (data === "hist:me") {
           context.waitUntil(answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Use /history or tap View History."));
+        } else if (data === "hist:on" || data === "hist:off") {
+          context.waitUntil(handleHistoryToggleCallback(env, data === "hist:on", userId as number, queryId, chatId as number));
         } else if (data === "forget:confirm") {
           context.waitUntil(answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, queryId, "Tap Confirm delete to erase all your data."));
           await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId as number, "Delete all your data?", forgetConfirmKeyboard());

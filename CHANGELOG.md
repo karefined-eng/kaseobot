@@ -7,6 +7,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), versio
 ## [Unreleased]
 
 ### Added
+- History opt-out: the `/history` reply carries a "Turn history off/on" toggle; while off, stored reports are erased immediately, each report is deleted right after delivery, failed jobs are not retryable from stored data, and the preference survives `/forget` and the daily cleanup
+- Delivered reports note when history is off; the daily cleanup removes opted-out leftovers within 24 hours
 - `/deepaudit` command with Cloudflare Container integration
 - SEOmator Container with full-page, desktop, and mobile screenshots
 - Markdown report with category scores, findings, and priority action plan

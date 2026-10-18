@@ -123,6 +123,15 @@ export function forgetConfirmKeyboard(): TelegramInlineKeyboard {
   };
 }
 
+export function historyKeyboard(enabled: boolean): TelegramInlineKeyboard {
+  return {
+    inline_keyboard: [
+      [{ text: enabled ? "Turn history off" : "Turn history on", callback_data: enabled ? "hist:off" : "hist:on" }],
+      [{ text: "Main menu", callback_data: "jobs:menu" }],
+    ],
+  };
+}
+
 /*────────────────────────────────────────────────────────────────────────────
   Message builders (button-first, slash commands still work)
 ────────────────────────────────────────────────────────────────────────────*/

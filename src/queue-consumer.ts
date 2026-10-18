@@ -1,4 +1,5 @@
 import { getJobById, type AuditJobMessage, type D1DatabaseLike, type JobEnvironment } from "./jobs";
+import { getHistoryPreference } from "./history";
 import { generateAuditReport, type GeneratedAuditReport, type KimiEnvironment } from "./ai/report";
 import { createAuditEngine } from "./audits/engine";
 import { CachedStaticHtmlFetcher, runGeoAudit } from "./audits/geo";
@@ -189,6 +190,14 @@ async function runJob(
     reportMarkdownV2 = reportMarkdownV2 + "\n\n" + toTelegramMarkdownV2(diffText);
   }
 
+  // History opt-out transparency: tell the user this report was not stored.
+  const retainHistory = await getHistoryPreference(db, job.telegram_user_id);
+  if (!retainHistory) {
+    const note = "History is off: this report was deleted from storage right after delivery. Use the toggle in /history to turn retention back on.";
+    reportMarkdown = reportMarkdown + "\n\n---\n\n" + note;
+    reportMarkdownV2 = reportMarkdownV2 + "\n\n" + toTelegramMarkdownV2(note);
+  }
+
   const beforeDelivery = await getJobById(db, job.job_id);
   if (!beforeDelivery || beforeDelivery.status !== "running") return;
   const messageId = await sendAuditReport(env.TELEGRAM_BOT_TOKEN, Number(job.chat_id), audit, reportMarkdown, reportMarkdownV2);
@@ -201,6 +210,11 @@ async function runJob(
   if (changesOrThrow(updated) === 0) {
     const finalJob = await getJobById(db, job.job_id);
     if (finalJob?.status === "cancel_requested") await setCanceled(db, job.job_id);
+  }
+
+  // Opted-out users keep nothing once a terminal outcome is delivered.
+  if (!retainHistory) {
+    await purgeJobData(db, job.job_id, job.telegram_user_id, job.url);
   }
 }
 
@@ -279,7 +293,9 @@ async function failPermanentJob(
     .bind(new Date().toISOString(), safeError(error.message), jobId)
     .run();
   if (changesOrThrow(result) > 0) {
-    await notifyFailure(env.TELEGRAM_BOT_TOKEN, Number(current.chat_id), jobId, safeError(error.message));
+    const retryable = await getHistoryPreference(db, current.telegram_user_id);
+    await notifyFailure(env.TELEGRAM_BOT_TOKEN, Number(current.chat_id), jobId, safeError(error.message), retryable);
+    if (!retryable) await purgeJobData(db, jobId, current.telegram_user_id, current.url);
   }
 }
 
@@ -298,20 +314,36 @@ async function consumeDeadLetter(db: D1DatabaseLike, env: QueueEnvironment, body
     .bind(new Date().toISOString(), RETRIES_EXHAUSTED, job.job_id)
     .run();
   if (changesOrThrow(failed) > 0) {
-    await notifyFailure(env.TELEGRAM_BOT_TOKEN, Number(job.chat_id), job.job_id, RETRIES_EXHAUSTED);
+    const retryable = await getHistoryPreference(db, job.telegram_user_id);
+    await notifyFailure(env.TELEGRAM_BOT_TOKEN, Number(job.chat_id), job.job_id, RETRIES_EXHAUSTED, retryable);
+    if (!retryable) await purgeJobData(db, job.job_id, job.telegram_user_id, job.url);
   }
 }
 
-async function notifyFailure(token: string | undefined, chatId: number, jobId: string, reason: string): Promise<void> {
+// History opt-out: nothing is retained once a terminal outcome is delivered.
+// Deletes the audit payload, the job row, and the regression snapshot for the
+// audited URL so a later audit of the same site starts without comparison data.
+async function purgeJobData(db: D1DatabaseLike, jobId: string, telegramUserId: string, url: string): Promise<void> {
+  await db.batch([
+    db.prepare("DELETE FROM audits WHERE job_id = ?").bind(jobId),
+    db.prepare("DELETE FROM jobs WHERE job_id = ?").bind(jobId),
+    db.prepare("DELETE FROM audit_snapshots WHERE telegram_user_id = ? AND url = ?").bind(telegramUserId, url),
+  ]);
+}
+
+async function notifyFailure(token: string | undefined, chatId: number, jobId: string, reason: string, retryable: boolean): Promise<void> {
   if (!token || !Number.isSafeInteger(chatId)) return;
+  const text = retryable
+    ? `Audit job ${jobId} failed: ${reason}. Use /status ${jobId} for details, or tap Retry audit to create a new job.`
+    : `Audit ${jobId} failed: ${reason}. History is off, so it was not saved - send the audit again to run it fresh.`;
   try {
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text: `Audit job ${jobId} failed: ${reason}. Use /status ${jobId} for details, or tap Retry audit to create a new job.`,
-        reply_markup: retryKeyboard(jobId),
+        text,
+        ...(retryable ? { reply_markup: retryKeyboard(jobId) } : {}),
       }),
     });
   } catch {
