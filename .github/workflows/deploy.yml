@@ -24,7 +24,7 @@ jobs:
         # On the free plan this step fails with "Unauthorized: ... Workers Paid plan";
         # continue-on-error keeps the Worker deploy below working regardless.
         continue-on-error: true
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -32,7 +32,7 @@ jobs:
           command: containers build container-seomator --tag seomator-container:v1 --push
 
       - name: Deploy Worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
